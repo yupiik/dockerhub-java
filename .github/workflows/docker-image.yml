@@ -2,7 +2,7 @@ name: DockerHub CI
 
 on:
   push:
-    tags: - '*.*.*'
+    tags: '*.*.*'
 
 jobs:
   docker:
