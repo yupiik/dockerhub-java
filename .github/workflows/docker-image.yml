@@ -43,7 +43,7 @@ jobs:
           file: ./Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
           push: true
-          tags: ossyupiik/java:${{ github.event.release.tag_name }}
+          tags: ossyupiik/java:${GITHUB_REF##*/}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache
 
