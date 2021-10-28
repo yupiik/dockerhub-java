@@ -1,4 +1,4 @@
-ARG DISTRIBUTION=zulu17.28.13-ca-jre17.0.0-linux_musl_x64
+ARG DISTRIBUTION=zulu17.30.15-ca-jre17.0.1-linux_musl_x64
 
 FROM alpine:3.14 as builder
 ARG DISTRIBUTION
