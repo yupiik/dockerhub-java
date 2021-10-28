@@ -38,7 +38,7 @@ jobs:
         id: semver_parser 
         uses: booxmedialtd/ws-action-parse-semver@v1
         with:
-          input_string: ${{ github.ref }}
+          input_string: '${{ github.ref }}'
           version_extractor_regex: '\/(.*)$'
 
       - name: Build and push
