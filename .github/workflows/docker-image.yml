@@ -16,7 +16,7 @@ jobs:
         uses: jungwinter/split@v2
         id: split
         with:
-          msg: ${{ github.event.release.tag_name }}
+          msg: ${{ github.ref }}
           separator: '/'
 
       - name: Login to DockerHub
