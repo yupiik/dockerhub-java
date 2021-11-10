@@ -7,6 +7,7 @@
 #
 # Client URL: jdbc:h2:tcp://172.17.0.2:2000/<database>
 #
+ARG h2Version=1.4.200
 FROM alpine:3.14 as builder
 ARG h2Version
 
