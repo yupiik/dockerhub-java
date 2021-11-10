@@ -19,9 +19,8 @@ jobs:
         id: parsed_tag
         run: |
           ref=${{ github.ref }}
-          info_by_line=$(echo "$ref" | tr '/' '\n')
-          version=$(echo "$info_by_line" | tail -n 1)
-          image=$(echo "$info_by_line" | tail -n 2 | head -n 1)
+          version=$(echo "$ref" |  cut -d '/' -f 4)
+          image=$(echo "$ref" |  cut -d '/' -f 3)
           echo "::set-output name=image::$image"
           echo "::set-output name=version::$version"
           echo "Image=$image,Version=$version"
