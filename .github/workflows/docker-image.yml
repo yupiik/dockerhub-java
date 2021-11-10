@@ -41,8 +41,6 @@ jobs:
         if: startsWith( github.ref, 'refs/tags/')
         with:
           push: true
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
           context: ./${{ steps.parsed_tag.outputs._2 }}
           file: ./Dockerfile
           tags: ossyupiik/${{ steps.parsed_tag.outputs._2 }}:${{ steps.parsed_tag.outputs._3 }}
