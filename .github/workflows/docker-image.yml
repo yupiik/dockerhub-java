@@ -15,17 +15,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
 
-      - name: Parse Tag Name
-        uses: jungwinter/split@v2
+      - name: Parsed tag
         id: parsed_tag
-        with:
-          msg: ${{ github.ref }}
-          separator: '/'
-
-      - name: Log parsed tag
         run: |
-          echo ${{ github.ref }}
-          echo ossyupiik/${{ steps.parsed_tag.outputs._2 }}:${{ steps.parsed_tag.outputs._3 }}
+          ref=${{ github.ref }}
+          info_by_line=$(echo "$ref" | tr '/' '\n')
+          image=$(echo "$info_by_line" | tail -n 1)
+          version=$(echo "$info_by_line" | tail -n 2 | head -n 1)
+          echo "::set-output name=image::$image"
+          echo "::set-output name=version::$version"
+          echo "Image=$image,Version=$version"
 
       - name: Login to DockerHub
         uses: docker/login-action@v1
@@ -49,11 +48,11 @@ jobs:
         if: startsWith( github.ref, 'refs/tags/')
         with:
           push: true
-          context: ./${{ steps.parsed_tag.outputs._2 }}
+          context: ./${{ steps.parsed_tag.outputs.image }}
           file: ./Dockerfile
-          tags: ossyupiik/${{ steps.parsed_tag.outputs._2 }}:${{ steps.parsed_tag.outputs._3 }}
+          tags: ossyupiik/${{ steps.parsed_tag.outputs.image }}:${{ steps.parsed_tag.outputs.version }}
           labels: |
             org.opencontainers.image.vendor=Yupiik
 
       - name: Image Report
-        run: echo ossyupiik/${{ steps.parsed_tag.outputs._2 }}:${{ steps.parsed_tag.outputs._3 }}@${{ steps.docker_build.outputs.digest }}
+        run: echo ossyupiik/${{ steps.parsed_tag.outputs.image }}:${{ steps.parsed_tag.outputs.version }}@${{ steps.docker_build.outputs.digest }}
