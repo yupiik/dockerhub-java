@@ -49,7 +49,7 @@ jobs:
         with:
           push: true
           context: ./${{ steps.parsed_tag.outputs.image }}
-          file: ./Dockerfile
+          file: ./${{ steps.parsed_tag.outputs.image }}/Dockerfile
           tags: ossyupiik/${{ steps.parsed_tag.outputs.image }}:${{ steps.parsed_tag.outputs.version }}
           labels: |
             org.opencontainers.image.vendor=Yupiik
