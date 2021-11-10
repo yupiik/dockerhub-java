@@ -14,7 +14,7 @@ jobs:
 
       - name: Parse Tag Name
         uses: jungwinter/split@v2
-        id: split
+        id: parsed_tag
         with:
           msg: ${{ github.ref }}
           separator: '/'
@@ -43,11 +43,11 @@ jobs:
           push: true
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache
-          context: ./${{ steps.split.outputs._0 }}
+          context: ./${{ steps.parsed_tag.outputs._2 }}
           file: ./Dockerfile
-          tags: ossyupiik/${{ steps.split.outputs._2 }}:${{ steps.split.outputs._3 }}
+          tags: ossyupiik/${{ steps.parsed_tag.outputs._2 }}:${{ steps.parsed_tag.outputs._3 }}
           labels: |
             org.opencontainers.image.vendor=Yupiik
 
       - name: Image Report
-        run: echo ossyupiik/${{ steps.split.outputs._0 }}:${{ steps.split.outputs._1 }}@${{ steps.docker_build.outputs.digest }}
+        run: echo ossyupiik/${{ steps.parsed_tag.outputs._2 }}:${{ steps.parsed_tag.outputs._3 }}@${{ steps.docker_build.outputs.digest }}
