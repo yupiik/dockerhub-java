@@ -1,6 +1,7 @@
 ARG DISTRIBUTION=zulu17.30.15-ca-jre17.0.1-linux_musl_x64
+ARG ALPINE_VERSION=3.15.0
 
-FROM alpine:3.14 as builder
+FROM alpine:$ALPINE_VERSION as builder
 ARG DISTRIBUTION
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8'
@@ -9,7 +10,7 @@ RUN wget --quiet "https://cdn.azul.com/zulu/bin/${DISTRIBUTION}.tar.gz" && \
     tar xf "${DISTRIBUTION}.tar.gz" --strip 1 -C /opt/jre
 
 # scratch would work but will prevent temp files to work so let's consume +2M but have it funcitonal
-FROM alpine:3.14
+FROM alpine:$ALPINE_VERSION
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' JAVA_HOME=/opt/jre
 ENV PATH="/opt/jre/bin:${PATH}"
