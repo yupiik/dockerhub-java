@@ -8,7 +8,8 @@
 # Client URL: jdbc:h2:tcp://172.17.0.2:2000/<database>
 #
 ARG h2Version=1.4.200
-FROM alpine:3.14 as builder
+ARG alpineVersion=3.15.0
+FROM alpine:$alpineVersion as builder
 ARG h2Version
 
 RUN wget --quiet "https://repo1.maven.org/maven2/com/h2database/h2/$h2Version/h2-$h2Version.jar" -O /opt/h2.jar
