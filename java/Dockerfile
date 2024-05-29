@@ -1,4 +1,4 @@
-ARG DISTRIBUTION=zulu21.34.19-ca-jre21.0.3-linux_musl_x64
+ARG DISTRIBUTION=zulu17.50.19-ca-jre17.0.11-linux_musl_x64.tar.gz
 ARG ALPINE_VERSION=3.19.1
 
 FROM alpine:$ALPINE_VERSION as builder
