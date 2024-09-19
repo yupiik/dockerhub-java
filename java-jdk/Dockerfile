@@ -13,7 +13,7 @@ RUN wget --quiet "https://cdn.azul.com/zulu/bin/${DISTRIBUTION}.tar.gz" && \
 FROM alpine:${ALPINE_VERSION}
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' JAVA_HOME=/opt/jdk
-ENV PATH="/opt/jre/bin:${PATH}"
+ENV PATH="/opt/jdk/bin:${PATH}"
 
 COPY --from=builder /opt/jdk /opt/jdk
 
