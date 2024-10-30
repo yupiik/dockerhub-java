@@ -1,14 +1,14 @@
 #
 # Build:
-# $ docker build --build-arg h2Version=2.1.214 . -t yupiik/h2:2.1.214
+# $ docker build --build-arg h2Version=2.3.232 . -t yupiik/h2:2.3.232
 #
 # Usage:
-# $ docker run yupiik/h2:2.1.214 -tcp -tcpAllowOthers -tcpPort 9092 -tcpPassword secret -baseDir /opt/storage/h2 [-ifNotExists]
+# $ docker run yupiik/h2:2.3.232 -tcp -tcpAllowOthers -tcpPort 9092 -tcpPassword secret -baseDir /opt/storage/h2 [-ifNotExists]
 #
 # Client URL: jdbc:h2:tcp://172.17.0.2:2000/<database>
 #
-ARG h2Version=2.1.214
-ARG alpineVersion=3.17.2
+ARG h2Version=2.3.232
+ARG alpineVersion=3.20.3
 FROM alpine:$alpineVersion as builder
 ARG h2Version
 
