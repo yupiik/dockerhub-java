@@ -1,4 +1,4 @@
-ARG DISTRIBUTION=zulu21.36.17-ca-jdk21.0.4-linux_musl_x64
+ARG DISTRIBUTION=zulu21.38.21-ca-jdk21.0.5-linux_musl_x64
 ARG ALPINE_VERSION=3.20.3
 
 FROM alpine:${ALPINE_VERSION} as builder
