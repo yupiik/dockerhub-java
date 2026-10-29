@@ -9,6 +9,8 @@ on:
       - '*/[0-9]+.[0-9]+.[0-9]+'
     tags:
       # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
+      - '*/[0-9]+.[0-9]+-alpine[0-9]+'
+      - '*/[0-9]+.[0-9]+.[0-9]+-alpine[0-9]+'
       - '*/[0-9]+.[0-9]+-alpine[0-9]+.[0-9]+'
       - '*/[0-9]+.[0-9]+.[0-9]+-alpine[0-9]+.[0-9]+'
       - '*/[0-9]+.[0-9]+-alpine[0-9]+.[0-9]+.[0-9]+'
