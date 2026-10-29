@@ -1,4 +1,4 @@
-ARG DISTRIBUTION=zulu25.38.105-ca-jdk25.0.3-linux_musl_x64
+ARG DISTRIBUTION=zulu25.38.107-ca-jdk25.0.3-linux_musl_x64
 ARG ALPINE_VERSION=3
 
 FROM alpine:${ALPINE_VERSION} as builder
