@@ -8,6 +8,46 @@ A docker image for Java >=17 based on link:https://www.azul.com/downloads/openjd
 
 https://hub.docker.com/r/ossyupiik/java/tags
 
+== Java with Docker CLI
+
+`ossyupiik/java-docker` is a Java 25 JRE with the Docker CLI at `/usr/bin/docker` for applications controlling an external Docker Engine.
+It is not a development-toolchain image: it does not provide Maven, gh, a JDK compiler, Docker plugins or a Docker daemon.
+The new image uses the official Eclipse Temurin Alpine runtime and copies only the static Docker client from the official Docker CLI image.
+Both inputs are pinned by multi-platform index digest in `java-docker/Dockerfile`, independently of the existing Zulu images.
+The supported platforms are `linux/amd64` and `linux/arm64` under the same image reference.
+
+The initial release tag is `25.0.5-alpine3.24-docker29.9.2` after the image has been published.
+Pin the published index digest in production to preserve platform selection and reproducibility.
+Updating either source requires updating its digest, rerunning both platform smoke tests and publishing a matching release tag.
+
+The image defaults to UID/GID `10001:10001`, `HOME=/tmp`, no entrypoint and `java --version` as its command.
+It works with a read-only root filesystem and writable `/tmp`, without root initialization or injected credentials.
+The upstream system and Java CA stores are retained; custom trust must be provisioned explicitly rather than relying on Temurin's root-oriented certificate entrypoint.
+Jib can use this image as its base and generate the application's Java entrypoint without adding a Docker binary during the Maven build.
+
+WARNING: Access to a Docker Engine socket grants host-administration capabilities even when the client runs as non-root.
+Provision socket access explicitly on a dedicated trusted host; this image does not start a daemon or grant socket permissions.
+
+Build and test the native platform locally with Docker, Python 3 and JDK 25 installed:
+
+[source,sh]
+----
+docker build -t java-docker:local java-docker
+sh java-docker/test/smoke.sh java-docker:local amd64
+SMOKE_HTTPS_URL=https://example.com sh java-docker/test/smoke.sh java-docker:local amd64
+----
+
+Use `arm64` instead of `amd64` on an ARM64 host.
+The smoke test checks metadata, Java/Docker execution, CA trust, the non-root/read-only contract and the absence of daemon executables without mounting a socket.
+The optional HTTPS probe verifies Java TLS trust against a public endpoint; it requires network access.
+These checks do not replace testing against the deployment's Docker Engine or a supply-chain/security review.
+
+The dedicated `Java Docker CLI` workflow runs smoke tests on native AMD64 and ARM64 runners for pull requests and changes on `main`.
+Publishing is restricted to upstream tags such as `java-docker/25.0.5-alpine3.24-docker29.9.2`, after both platform tests succeed, using the existing Docker Hub secrets.
+The Docker Hub `ossyupiik/java-docker` repository and token write permissions must be provisioned before the first release.
+No image is published by a pull request, a push to `main` or a manual workflow invocation.
+The existing images and their release workflow are unchanged.
+
 == H2
 
 image::https://img.shields.io/docker/v/ossyupiik/h2?color=00b2ef&label=Last%20Release&logoColor=00b2ef&logo=data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgoAAAANSUhEUgAAACAAAAAqCAYAAADS4VmSAAAAAXNSR0IArs4c6QAABGdJREFUWEedmF2I3FQUx%2F9nZrYzq7ttMtuK32B90WpFEbtUW2T7UqqbjIgM%2BKQP%2BmAfBUEFP0H7oo%2BiIgg%2BqRUqk%2BwWRXTFj9UWoVIp7UN1H9QitTvJMtpOd3dydDI7k9zk3syd5C25557zO1%2F3I4S8z3xzJzp0MpweBDfioanf86iiPJPCOY7HwlzbzKUr1yQ4XgAgOZdhm4VRHcoLIHrft5ojCqMDiKF%2FGlQkcOfNgecjQowGcKS5ByX6NmUsDrXOe%2FFw9TvdVIwGEDdUNiawn%2F4NDR0%2BP4HKWCtPFPQBXP8EmO9UGonDEf0My7hLJwr6AHEDqjzryCSo9ACEtuM%2FYVevl3rneH8D2LoxptWWugBR2w2r8hGjMBxAaDt6BrbxRmZuHf81gJ%2FXLchsgEbzQRDN6SobyMWhmWdRq86roLMB4ooKVMWs4Q0Uuf4jYP4kfKfONKytxwdjR1vbsL5%2BXgdcDeD6J8G8U6vtukLJ2hDb8hdYxh2yKKgBsorJ9QJwYjMiMKzEZqRRkHKAhrcKwliPmC7ANrYN6A%2Bf2oTKtZelOW1%2FUUK93oml6RKYK%2BE7Yw01c1NyXhpggSto%2BZe0Qh%2FgMQBFFPC%2BlvykMY4Zasch0gBC4RUfx%2BzmDwYT5lem0Ql%2BTBkTWjW4HfbUqVhHvALgRRWgCDDXmkGw%2FpWWN%2BXLE9h%2FdW8z%2BtQzUETUIVkFWSjtw%2BzkQt%2BGCBD3pG2UUKcon43mCRBpbkZYhGXeF9UNj6PiX5Q5FgE4zUWAdmt5n2czEtLEP8Cu3huWeCxX6vVenHwadnWHtAsc7zcAN43iRA9gmAGNftZ05A8A18UBCQtcQstf06JmfhS16kdS7%2FsfHf9ZgA9p6Zs0xkjwngsHUNvyWeTNch0ofKxUpiIRNiO6BzXjp4Fow38OxK9HXZC8YDAfRK36dio1JaOCB0i%2BAiZBjvx1FcbKn8MyxWOZ670MxkviQuR4vwLYnnKG2QeRsfG9A9ssZYY%2Ba9BpXgRoPCVCWOwVoXvhFnDxtFLHsFOQTirS1rfDNpbSS3HD64Agv2JR8VZYm88MKcJ9AH8plWEEqJlFMQVq%2Bq8B3K8Y%2Fga2KY45XrfQ7s6Ea%2F9zBeo3RBud5IIJzPmmePJZ2QUOjuXKf6GzA0FpL8DvqjpJTIG7%2FCq48EIoTPQULOMdwXCyY%2BRU6eO4cDrCDCyzG92eGaUBWeE5%2FlsAH8yMBvMh1KrRqbgvrFhNIwDXOwfGNdJQOZ4PYMtIaWAso2b2LynJHxrHYZvTsQgwwfG7Px16T9f7bi0E3FQbDZ4ECu%2BF490lmuhDpWz%2FIiuJgmQzoiWAox1N1LoK2yyHn5zlJ2IA0dnf9dfArFq0ugeYK%2BOOSgAkfhBcWKYt1osCoC%2Fk%2BsfAvCszbbZJQwCC3bCnojNgXJsqAkmLzsoBIDgqBRkAuP5ZMN88EGqfK6N%2B22omvS5AX8nCUgUtI74IfQ%2Fb3DP8cqqiGBVAoSc%2FQFiIG%2F8K825W%2F%2Bv4D2sg4qMfRFPFAAAAAElFTkSuQmCC[]
