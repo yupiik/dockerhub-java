@@ -1,0 +1,2 @@
+# Local evaluation artifacts are not part of the image sources.
+/evidence/

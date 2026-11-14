@@ -10,43 +10,67 @@ https://hub.docker.com/r/ossyupiik/java/tags
 
 == Java with Docker CLI
 
-`ossyupiik/java-docker` is a Java 25 JRE with the Docker CLI at `/usr/bin/docker` for applications controlling an external Docker Engine.
-It is not a development-toolchain image: it does not provide Maven, gh, a JDK compiler, Docker plugins or a Docker daemon.
-The new image uses the official Eclipse Temurin Alpine runtime and copies only the static Docker client from the official Docker CLI image.
-Both inputs are pinned by multi-platform index digest in `java-docker/Dockerfile`, independently of the existing Zulu images.
-The supported platforms are `linux/amd64` and `linux/arm64` under the same image reference.
+`ossyupiik/java-docker` provides a Java 25 JRE and Docker CLI 29.9.2 at `/usr/bin/docker` for applications controlling an external Docker Engine.
+The shared `java-docker/Dockerfile` selects one of two variants with `ARG VARIANT=alpine`: the default `alpine` uses the pinned official Eclipse Temurin Alpine runtime, while `zulu` uses pinned Debian bookworm-slim and a verified official Azul Zulu glibc JRE archive.
+Both variants copy only the pinned static Docker client from the official Docker CLI image and support `linux/amd64` and `linux/arm64` under each published image reference.
+There is one build directory and one workflow for both variants, not a separate Zulu directory or workflow.
 
-The initial release tag is `25.0.5-alpine3.24-docker29.9.2` after the image has been published.
-Pin the published index digest in production to preserve platform selection and reproducibility.
-Updating either source requires updating its digest, rerunning both platform smoke tests and publishing a matching release tag.
-
-The image defaults to UID/GID `10001:10001`, `HOME=/tmp`, no entrypoint and `java --version` as its command.
-It works with a read-only root filesystem and writable `/tmp`, without root initialization or injected credentials.
+The image is runtime-only: it contains no Maven, gh, command-line or in-process Java compiler, Docker plugins or Docker daemon.
+Both variants default to UID/GID `10001:10001`, `HOME=/tmp`, no entrypoint and `java --version` as their command.
+They support a read-only root filesystem with writable `/tmp`, without root initialization or baked-in credentials.
 The upstream system and Java CA stores are retained; custom trust must be provisioned explicitly rather than relying on Temurin's root-oriented certificate entrypoint.
-Jib can use this image as its base and generate the application's Java entrypoint without adding a Docker binary during the Maven build.
+The Zulu variant preserves the upstream JRE modules, legal notices and CDS archives, installs only the required Debian runtime libraries and system CA store without recommended packages, and keeps download tooling in a separate build stage.
+Jib can use either variant as its base and generate the application's Java entrypoint without adding a Docker binary during the Maven build.
 
 WARNING: Access to a Docker Engine socket grants host-administration capabilities even when the client runs as non-root.
-Provision socket access explicitly on a dedicated trusted host; this image does not start a daemon or grant socket permissions.
+Provision socket or remote-engine access explicitly on a dedicated trusted host; these images do not start a daemon or grant socket permissions.
 
-Build and test the native platform locally with Docker, Python 3 and JDK 25 installed:
+The Temurin, Debian and Docker multi-platform image inputs are pinned by digest in `java-docker/Dockerfile`.
+Both architecture-specific Zulu archives are verified against pinned official SHA-256 values, and Debian package resolution uses a fixed signed snapshot.
+The fixed snapshot preserves package reproducibility; later security fixes require a reviewed snapshot update, rebuild and new release.
+Updating either variant requires reviewing its affected pins, release version and smoke-test version checks, then rerunning native AMD64 and ARM64 tests.
+
+Build and test locally with a host JDK 25 and a local Linux Docker daemon.
+The default Alpine build does not require a variant argument:
 
 [source,sh]
 ----
-docker build -t java-docker:local java-docker
-sh java-docker/test/smoke.sh java-docker:local amd64
-SMOKE_HTTPS_URL=https://example.com sh java-docker/test/smoke.sh java-docker:local amd64
+docker buildx build --load --platform linux/amd64 -t java-docker:alpine-local java-docker
+java java-docker/test/SmokeTest.java java-docker:alpine-local amd64 alpine
 ----
 
-Use `arm64` instead of `amd64` on an ARM64 host.
-The smoke test checks metadata, Java/Docker execution, CA trust, the non-root/read-only contract and the absence of daemon executables without mounting a socket.
-The optional HTTPS probe verifies Java TLS trust against a public endpoint; it requires network access.
+Select the Zulu variant explicitly:
+
+[source,sh]
+----
+docker buildx build --build-arg VARIANT=zulu --load --platform linux/amd64 -t java-docker:zulu-local java-docker
+java java-docker/test/SmokeTest.java java-docker:zulu-local amd64 zulu
+----
+
+On a native ARM64 host, select `linux/arm64` and pass `arm64` to the smoke runner.
+The shared runner accepts `java java-docker/test/SmokeTest.java IMAGE amd64 alpine|zulu`, with `alpine` as the default when the variant argument is omitted.
+The old `java-docker/test/smoke.sh` remains a thin alias for the Java runner.
+Set `SMOKE_HTTPS_URL=https://example.com` when invoking the runner to enable the optional Java TLS trust probe, which requires network access.
+
+Both variants are checked for metadata, Java vendor/version, Java and static Docker execution, CA trust, absence of compilers and daemon executables, and the non-root/read-only contract with all capabilities dropped and no-new-privileges enabled.
+Smoke tests never mount a Docker socket.
+`SecureDirectoryStream` tests are mandatory only for Zulu, on both tmpfs and a writable bind mount, including descriptor-relative reads after directory replacement and rejection of file and directory symlinks.
+An unsupported filesystem or runtime fails these Zulu checks rather than silently falling back to ordinary directory streams.
+The Alpine variant is not compatible with a strict broker requiring `SecureDirectoryStream`.
+Neither glibc nor the Java vendor alone guarantees secure directory handles on every filesystem provider; test the deployment's actual filesystem too.
 These checks do not replace testing against the deployment's Docker Engine or a supply-chain/security review.
 
-The dedicated `Java Docker CLI` workflow runs smoke tests on native AMD64 and ARM64 runners for pull requests and changes on `main`.
-Publishing is restricted to upstream tags such as `java-docker/25.0.5-alpine3.24-docker29.9.2`, after both platform tests succeed, using the existing Docker Hub secrets.
-The Docker Hub `ossyupiik/java-docker` repository and token write permissions must be provisioned before the first release.
-No image is published by a pull request, a push to `main` or a manual workflow invocation.
-The existing images and their release workflow are unchanged.
+The single `java-docker.yml` workflow tests both variants on native AMD64 and ARM64 Ubuntu 26.04 runners, forming a two-variant by two-architecture matrix for pull requests and changes on `main`.
+Releases use the unified tag prefix `java-docker/<full-image-version>`.
+The workflow derives the image version directly from the Git tag, selecting `alpine` for `JAVA-alpineMAJOR.MINOR-dockerDOCKER_VERSION` or `zulu` for `JAVA-zulu-debianMAJOR-dockerDOCKER_VERSION`.
+There is no release-version file or allowlist; malformed tag names are rejected.
+The full Zulu Java version includes Azul's PSU suffix so the tag identifies the actual runtime.
+For example, `java-docker/25.0.5-alpine3.24-docker29.9.2` maps to `ossyupiik/java-docker:25.0.5-alpine3.24-docker29.9.2`, and `java-docker/25.0.5.0.3-zulu-debian12-docker29.9.2` maps to `ossyupiik/java-docker:25.0.5.0.3-zulu-debian12-docker29.9.2`.
+The Zulu variant is published only after merge through its release-tag workflow.
+Publishing requires a release commit merged into `main`, successful native smoke tests and the existing Docker Hub secrets and repository write permissions.
+A pull request, push to `main` or manual workflow invocation never publishes an image.
+Pin the published multi-platform index digest in production to preserve platform selection and reproducibility.
+The other Java images and their release workflow are unchanged.
 
 == H2
 
