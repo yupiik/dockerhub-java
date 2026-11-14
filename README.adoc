@@ -48,6 +48,51 @@ The Docker Hub `ossyupiik/java-docker` repository and token write permissions mu
 No image is published by a pull request, a push to `main` or a manual workflow invocation.
 The existing images and their release workflow are unchanged.
 
+== Zulu Java with Docker CLI (glibc)
+
+The `java-docker-zulu` variant combines a verified official Azul Zulu glibc JRE archive with Debian bookworm-slim and the same pinned static Docker CLI.
+It is published in the existing `ossyupiik/java-docker` repository with a distinct Zulu tag; it does not replace the existing Alpine variant or change the other Java images.
+The intended first image tag is `25.0.5.0.3-zulu-debian12-docker29.9.2`, published only after the corresponding PR is merged and its release tag succeeds.
+The full Java version includes Azul's PSU suffix so the tag identifies the actual runtime rather than just its Java feature/update version.
+
+The image provides only a Java 25 JRE and Docker CLI 29.9.2 at `/usr/bin/docker`, not a compiler, Maven, gh, plugins or a Docker daemon.
+It preserves the upstream JRE modules, legal notices, CDS archives and Java CA store, and installs the required Debian runtime libraries and system CA store without recommended packages.
+Download tooling stays in a separate build stage.
+It defaults to UID/GID `10001:10001`, `HOME=/tmp`, no entrypoint and `java --version`, and supports a read-only root filesystem with a writable `/tmp`.
+Access to an external Docker Engine still requires separately provisioned socket or remote-engine access and grants host-administration capabilities.
+No credentials are baked into the image, and smoke tests never mount a Docker socket.
+
+The Debian and Docker multi-platform indexes are pinned by digest, both Zulu archives are verified against their pinned official SHA-256 values, and Debian package resolution uses a fixed signed snapshot.
+Updating the image requires reviewing all affected pins, advancing the package snapshot, updating `java-docker-zulu/release-version` and the version checks, then rerunning native AMD64 and ARM64 tests.
+The fixed snapshot preserves package reproducibility; it does not automatically incorporate later security fixes, which require a reviewed rebuild and new release.
+
+Build and test locally with a host JDK 25 and local Linux Docker daemon:
+
+[source,sh]
+----
+docker buildx build --platform linux/amd64 --load -t java-docker-zulu:local java-docker-zulu
+java java-docker-zulu/test/SmokeTest.java java-docker-zulu:local amd64
+SMOKE_HTTPS_URL=https://example.com java java-docker-zulu/test/SmokeTest.java java-docker-zulu:local amd64
+----
+
+On a native ARM64 host, select `linux/arm64` and pass `arm64` to the smoke runner.
+The mandatory tests exercise `SecureDirectoryStream` on both tmpfs and a writable bind mount, including descriptor-relative reads after directory replacement and rejection of file and directory symlinks.
+They also check Azul vendor/version, absence of both command-line and in-process compilers, CA trust, static Docker execution and the non-root/read-only contract with all capabilities dropped and no-new-privileges enabled.
+An unsupported filesystem or runtime fails rather than silently falling back to ordinary directory streams.
+Neither glibc nor the Java vendor alone guarantees secure directory handles on every filesystem provider; test the deployment's actual filesystem too.
+The optional HTTPS test requires network access.
+
+The local AMD64 evaluation measured approximately 111.3 MiB of compressed layers, 19.0% less than the compared official Azul headless image plus the same Docker client.
+The official headless comparison also included an in-process Java compiler, unlike the selected JRE archive.
+See `java-docker-zulu/evidence/RESULTS.adoc` for exact immutable inputs, size measurements, local test results and limitations.
+These measurements are not a vulnerability scan or a guarantee about daemon compatibility.
+
+The dedicated `Zulu Java Docker CLI` workflow runs on native AMD64 and ARM64 runners for pull requests and changes to `main`.
+Release tags use `java-docker-zulu/25.0.5.0.3-debian12-docker29.9.2`, matching `java-docker-zulu/release-version`, and publish `ossyupiik/java-docker:25.0.5.0.3-zulu-debian12-docker29.9.2` only after both smoke jobs succeed.
+The workflow rejects a release commit that has not been merged into `main` and uses the existing Docker Hub secrets and repository permissions.
+A pull request, push to `main` or manual workflow invocation never publishes an image.
+Pin the resulting published multi-platform index digest in production, not the local build identity recorded in the evaluation.
+
 == H2
 
 image::https://img.shields.io/docker/v/ossyupiik/h2?color=00b2ef&label=Last%20Release&logoColor=00b2ef&logo=data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgoAAAANSUhEUgAAACAAAAAqCAYAAADS4VmSAAAAAXNSR0IArs4c6QAABGdJREFUWEedmF2I3FQUx%2F9nZrYzq7ttMtuK32B90WpFEbtUW2T7UqqbjIgM%2BKQP%2BmAfBUEFP0H7oo%2BiIgg%2BqRUqk%2BwWRXTFj9UWoVIp7UN1H9QitTvJMtpOd3dydDI7k9zk3syd5C25557zO1%2F3I4S8z3xzJzp0MpweBDfioanf86iiPJPCOY7HwlzbzKUr1yQ4XgAgOZdhm4VRHcoLIHrft5ojCqMDiKF%2FGlQkcOfNgecjQowGcKS5ByX6NmUsDrXOe%2FFw9TvdVIwGEDdUNiawn%2F4NDR0%2BP4HKWCtPFPQBXP8EmO9UGonDEf0My7hLJwr6AHEDqjzryCSo9ACEtuM%2FYVevl3rneH8D2LoxptWWugBR2w2r8hGjMBxAaDt6BrbxRmZuHf81gJ%2FXLchsgEbzQRDN6SobyMWhmWdRq86roLMB4ooKVMWs4Q0Uuf4jYP4kfKfONKytxwdjR1vbsL5%2BXgdcDeD6J8G8U6vtukLJ2hDb8hdYxh2yKKgBsorJ9QJwYjMiMKzEZqRRkHKAhrcKwliPmC7ANrYN6A%2Bf2oTKtZelOW1%2FUUK93oml6RKYK%2BE7Yw01c1NyXhpggSto%2BZe0Qh%2FgMQBFFPC%2BlvykMY4Zasch0gBC4RUfx%2BzmDwYT5lem0Ql%2BTBkTWjW4HfbUqVhHvALgRRWgCDDXmkGw%2FpWWN%2BXLE9h%2FdW8z%2BtQzUETUIVkFWSjtw%2BzkQt%2BGCBD3pG2UUKcon43mCRBpbkZYhGXeF9UNj6PiX5Q5FgE4zUWAdmt5n2czEtLEP8Cu3huWeCxX6vVenHwadnWHtAsc7zcAN43iRA9gmAGNftZ05A8A18UBCQtcQstf06JmfhS16kdS7%2FsfHf9ZgA9p6Zs0xkjwngsHUNvyWeTNch0ofKxUpiIRNiO6BzXjp4Fow38OxK9HXZC8YDAfRK36dio1JaOCB0i%2BAiZBjvx1FcbKn8MyxWOZ670MxkviQuR4vwLYnnKG2QeRsfG9A9ssZYY%2Ba9BpXgRoPCVCWOwVoXvhFnDxtFLHsFOQTirS1rfDNpbSS3HD64Agv2JR8VZYm88MKcJ9AH8plWEEqJlFMQVq%2Bq8B3K8Y%2Fga2KY45XrfQ7s6Ea%2F9zBeo3RBud5IIJzPmmePJZ2QUOjuXKf6GzA0FpL8DvqjpJTIG7%2FCq48EIoTPQULOMdwXCyY%2BRU6eO4cDrCDCyzG92eGaUBWeE5%2FlsAH8yMBvMh1KrRqbgvrFhNIwDXOwfGNdJQOZ4PYMtIaWAso2b2LynJHxrHYZvTsQgwwfG7Px16T9f7bi0E3FQbDZ4ECu%2BF490lmuhDpWz%2FIiuJgmQzoiWAox1N1LoK2yyHn5zlJ2IA0dnf9dfArFq0ugeYK%2BOOSgAkfhBcWKYt1osCoC%2Fk%2BsfAvCszbbZJQwCC3bCnojNgXJsqAkmLzsoBIDgqBRkAuP5ZMN88EGqfK6N%2B22omvS5AX8nCUgUtI74IfQ%2Fb3DP8cqqiGBVAoSc%2FQFiIG%2F8K825W%2F%2Bv4D2sg4qMfRFPFAAAAAElFTkSuQmCC[]
