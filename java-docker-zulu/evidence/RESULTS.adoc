@@ -1,0 +1,115 @@
+= Local image evaluation
+
+Evaluation date: 2026-11-14.
+All builds and executions were local on Linux AMD64.
+
+== Selected runtime
+
+The selected image uses pinned Debian bookworm-slim (glibc 2.36), the unmodified official Azul Zulu glibc JRE archive, and only the static Docker client copied from the pinned upstream CLI image.
+Java reports `25.0.5.0.3+1-LTS`, vendor `Azul Systems, Inc.`, distribution `Zulu25.38+109-CA`.
+The extra `.0.3` suffix is the current official Azul PSU build of Java 25.0.5, not a different Java feature/update release.
+The archive is not musl, CRaC, JavaFX or a JDK.
+The runtime preserves the upstream JRE modules, CA store, legal notices and CDS archives; no custom jlink or manual module stripping is used.
+Debian runtime additions are installed without recommendations: `ca-certificates libstdc++6 libfontconfig1 libfreetype6 zlib1g` and their dependencies.
+Download tooling is confined to a separate build stage.
+
+The local candidate tag is `java-docker-zulu:25.0.5-docker29.9.2-local`.
+The loaded local index digest is `sha256:87dae91da614e316258741de1c4f4d9fbc65ce414e7cc086661aebe03bfc9c5c`.
+The AMD64 image manifest digest is `sha256:0bb5014736ac801cf7b63bf7e09a054074387a7c9e6027015c8f6767667697f4`.
+The image config digest is `sha256:2bc8efc5d51ed637ff1cb11731e00a84ad38629f74379c6968aac0dae3ec18ce`.
+These are local build identities, not published registry references.
+
+== Immutable inputs
+
+[cols="1,4",options="header"]
+|===
+|Input |Pinned value
+|Debian multiarch index |`debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc`
+|Docker multiarch index |`docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb`
+|Debian package snapshot |`20261104T000000Z`, both `https://snapshot.debian.org/archive/debian/` and `https://snapshot.debian.org/archive/debian-security/`
+|AMD64 archive |`https://cdn.azul.com/zulu/bin/zulu25.38.109-ca-jre25.0.5.0.3-linux_x64.tar.gz`
+|AMD64 archive SHA-256 |`740a9a3ed6b60de7ae2c22633f122147572024c1a66663f69aa7672ec48c4b09`
+|ARM64 archive |`https://cdn.azul.com/zulu/bin/zulu25.38.109-ca-jre25.0.5.0.3-linux_aarch64.tar.gz`
+|ARM64 archive SHA-256 |`604d65f811f942d49099b7c1c1b865ff8b700d51299be0afffa24447a033b866`
+|===
+
+Both archives were downloaded locally and their SHA-256 values matched the official Azul metadata saved in `zulu-amd64-metadata.json` and `zulu-arm64-metadata.json`.
+Their metadata UUIDs are `c70f0220-b6c4-4afd-8c4b-d0aaf828ba28` and `5f06bdd2-5ca8-4dfb-9411-e5a86029c993`, respectively.
+Metadata explicitly identifies `lib_c_type=glibc`, `java_package_type=jre` and `javafx_bundled=false`.
+Registry index evidence confirms Linux AMD64 and ARM64 inputs for both image sources.
+The Docker index pin is copied unchanged from the existing Docker CLI image definition.
+APT bootstrap uses HTTP to the fixed snapshot because Debian slim initially lacks TLS roots; signed Debian repository metadata and package hash verification remain enabled.
+After CA installation the sources use HTTPS; only validity-date expiry checking is disabled for the historical snapshot, not signature verification.
+The exact installed package versions are retained in `candidate-runtime.log`.
+
+== Official-image comparison
+
+The inspected official alternative was `azul/zulu-openjdk-debian:25-jre-headless@sha256:3adc35b053f36df297a74b3dd915a872ede553226f8d56c0e9714a903c70db86`.
+It is a real AMD64/ARM64 Debian bookworm glibc image with the requested Azul release.
+It reports 495,468,313 bytes in local Docker inspection before adding Docker and has a 238 MiB runtime directory, versus 190 MiB for the archive runtime.
+`Dockerfile.official-comparison` adds exactly the same pinned static Docker client for an apples-to-apples size comparison.
+
+[cols="1,1,1",options="header"]
+|===
+|Metric |Selected archive image |Official headless image + same CLI
+|Compressed layer bytes |116,701,550 |144,090,891
+|Local Docker `.Size` bytes |462,093,522 |560,125,765
+|===
+
+The selected image saves 27,389,341 compressed bytes (19.0%) and 98,032,243 bytes (17.5%) in this Docker installation's reported size.
+Compressed layer size is approximately 111.3 MiB versus 137.4 MiB, excluding tiny manifest/config metadata.
+Local Docker uses the containerd image store; `.Size` must not be interpreted as compressed download size or exclusively extracted filesystem size.
+The layer sums come directly from the saved manifests and are recorded in `size-comparison.json`.
+
+The official headless image also contains `jdk.compiler` and returns a non-null `ToolProvider.getSystemJavaCompiler()` despite lacking a `javac` executable.
+Consequently it fails the mandatory no-compiler smoke assertion; the selected official archive has no `jdk.compiler` and returns null.
+This compiler difference, plus the size reduction, justifies choosing the verified archive instead of the official container base.
+The expected comparison rejection is retained in `smoke-official-comparison-amd64.log`, with module evidence in `modules-comparison.log`.
+
+== Smoke results
+
+Native AMD64 build and smoke passed.
+The test runner is Java 25 source-launchable and uses the same Docker isolation/resource limits and optional HTTPS pattern as the existing smoke tests, without a Python dependency.
+The image has UID/GID `10001:10001`, `HOME=/tmp`, working directory `/tmp`, no entrypoint, and default command `["java", "--version"]`.
+Configuration checks reject exposed ports, declared volumes and inherited `DOCKER_*` variables.
+Every test container uses `--read-only --cap-drop ALL --security-opt no-new-privileges --user 10001:10001`, a writable `/tmp` tmpfs and a writable `/work` host bind mount, with test classes mounted read-only.
+The ordinary tests run with `--network none`, 128 PIDs, 256 MiB memory and one CPU.
+The Java probe checks the root mount's `ro` flag in `/proc/mounts`, UID/GID, zero effective capabilities, `NoNewPrivs`, writable mount flags and actual file creation.
+
+Both `/tmp` and `/work` returned `sun.nio.fs.UnixSecureDirectoryStream`.
+On both filesystems the probe opened a directory, renamed it and replaced its original pathname with a different directory containing decoy content, then successfully read the original content through `SecureDirectoryStream.newByteChannel` relative to the open descriptor.
+It also opened a real child directory descriptor-relative and rejected both file and directory symlinks with `NOFOLLOW_LINKS`.
+The tests fail rather than silently falling back to ordinary directory streams.
+
+Vendor, exact Java feature/update, absence of both command-line and in-process Java compilers, static Docker client, Docker 29.9.2, system CA store, 106 Java trusted issuers, no Docker socket/storage, and no daemon/plugins passed.
+The optional Java HTTPS request to `https://example.com` completed with status 200 under the same hardening flags, with network access enabled only for that explicit opt-in run.
+See `smoke-amd64.log` and `smoke-amd64-https.log`.
+
+== Reproduction
+
+From the repository root:
+
+[source,shell]
+----
+docker buildx build --platform linux/amd64 --load -t java-docker-zulu:25.0.5-docker29.9.2-local java-docker-zulu
+java java-docker-zulu/test/SmokeTest.java java-docker-zulu:25.0.5-docker29.9.2-local amd64
+SMOKE_HTTPS_URL=https://example.com java java-docker-zulu/test/SmokeTest.java java-docker-zulu:25.0.5-docker29.9.2-local amd64
+----
+
+A host JDK >= 25 and a local Linux Docker daemon are required.
+The tests compile only on the host and never install a compiler into the image.
+On native ARM64, use `--platform linux/arm64` for the build and `arm64` as the runner's second argument.
+
+== Retained artifacts and limitations
+
+The evaluation artifacts remain locally inside this directory: raw registry manifests, Azul metadata, build/export logs, image inspection, package/module inventory, smoke logs and checksums.
+Only this report is intended for Git; the other evaluation artifacts are ignored and must not be assumed available in a clone.
+Downloaded archives, the extracted AMD64 runtime, and local image tar archives are retained locally but excluded from Git by the new directory's `.gitignore`.
+`candidate-amd64.oci.tar` is a local OCI export; `official-comparison-amd64.tar` is a local Docker image save for size evidence.
+Their checksums are in `image-archive-sha256.log`.
+
+ARM64 archive checksum and multiarch registry availability were verified, but ARM64 was not built or executed in this evaluation.
+The SecureDirectoryStream proof applies to the tested Linux host filesystem and tmpfs; other filesystems must pass the same smoke test.
+No Docker daemon connectivity or container launch through the embedded CLI was attempted; only the client binary is included and no socket is supplied.
+No vulnerability scan, push, remote mutation, commit or prune was performed.
+No existing repository file was edited as part of this evaluation.
