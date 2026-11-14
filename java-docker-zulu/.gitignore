@@ -1,3 +1,0 @@
-# Retain local evaluation artifacts without adding logs or runtime binaries to Git.
-/evidence/*
-!/evidence/RESULTS.adoc

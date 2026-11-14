@@ -10,14 +10,18 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-// Run with a host JDK >= 25: java java-docker-zulu/test/SmokeTest.java IMAGE [amd64|arm64]
+// Run with a host JDK >= 25: java java-docker/test/SmokeTest.java IMAGE [amd64|arm64] [alpine|zulu]
 public class SmokeTest {
     public static void main(final String[] args) throws Exception {
-        if (args.length < 1 || args.length > 2) {
-            throw new IllegalArgumentException("Usage: java java-docker-zulu/test/SmokeTest.java IMAGE [amd64|arm64]");
+        if (args.length < 1 || args.length > 3) {
+            throw new IllegalArgumentException("Usage: java java-docker/test/SmokeTest.java IMAGE [amd64|arm64] [alpine|zulu]");
         }
         final var image = args[0];
-        final var architecture = args.length == 2 ? args[1] : "amd64";
+        final var architecture = args.length >= 2 ? args[1] : "amd64";
+        final var variant = args.length == 3 ? args[2] : "alpine";
+        if (!List.of("alpine", "zulu").contains(variant)) {
+            throw new IllegalArgumentException("Unsupported variant: " + variant);
+        }
         if (!List.of("amd64", "arm64").contains(architecture)) {
             throw new IllegalArgumentException("Unsupported architecture: " + architecture);
         }
@@ -35,7 +39,7 @@ public class SmokeTest {
             throw new IllegalStateException("Unexpected environment: " + environment);
         }
         System.out.println("Image config: PASS (" + architecture + ")");
-        final var temporary = Files.createTempDirectory("java-docker-zulu-smoke-");
+        final var temporary = Files.createTempDirectory("java-docker-smoke-");
         try {
             Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rwxr-xr-x"));
             final var classes = Files.createDirectory(temporary.resolve("classes"));
@@ -73,20 +77,24 @@ public class SmokeTest {
                         echo 'Root filesystem is writable' >&2
                         exit 1
                     fi
-                    ldd --version | head -1 | grep 'GLIBC'
-                    ldd /usr/bin/docker 2>&1 | grep -E 'not a dynamic executable|statically linked'
+                    if [ "$1" = zulu ]; then
+                        ldd --version | head -1 | grep 'GLIBC'
+                        ldd /usr/bin/docker 2>&1 | grep -E 'not a dynamic executable|statically linked'
+                    else
+                        test -s /etc/alpine-release
+                    fi
                     docker --version | grep '^Docker version 29.9.2,'
                     java --version
                     echo 'Runtime-only, static Docker client, system/Java CA stores, no daemon/plugins: PASS'
-                    """));
+                    """, "smoke", variant));
             run(checks);
             final var probe = container(image, architecture, classes, writable, false);
-            probe.addAll(List.of("java", "-cp", "/probe", "SmokeProbe"));
+            probe.addAll(List.of("java", "-cp", "/probe", "SmokeProbe", variant));
             run(probe);
             final var https = System.getenv("SMOKE_HTTPS_URL");
             if (https != null && !https.isBlank()) {
                 final var networkProbe = container(image, architecture, classes, writable, true);
-                networkProbe.addAll(List.of("java", "-cp", "/probe", "SmokeProbe", https));
+                networkProbe.addAll(List.of("java", "-cp", "/probe", "SmokeProbe", variant, https));
                 run(networkProbe);
             }
             System.out.println("Smoke tests: PASS");
