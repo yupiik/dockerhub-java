@@ -1,0 +1,7 @@
+.diagram { overflow-x: auto; margin: 1.5rem 0; padding: 1rem; background: #f6f8fa; border: 1px solid #d8dee4; border-radius: .5rem; }
+.diagram .mermaid { white-space: pre-wrap; background: transparent; margin: 0; }
+.diagram svg { display: block; margin: auto; min-width: 580px; height: auto; }
+table { width: 100%; }
+td, th { overflow-wrap: anywhere; }
+pre { overflow-x: auto; }
+@media (max-width: 600px) { .diagram { padding: .5rem; } }

@@ -1,0 +1,98 @@
+= Permissions and tokens
+:minisite-breadcrumb: Overview[index.html] > Permissions and tokens
+
+== Prerequisites
+
+* The implementation and workflow files must be merged into `main` before release tags pin that source commit.
+* GitHub Actions must be enabled and allowed to use the referenced actions and native `ubuntu-26.04` / `ubuntu-26.04-arm` runners.
+* The publication gate is intentionally restricted to `yupiik/dockerhub-java` and updater dispatch to `main`; a fork needs deliberate gate, destination and secret changes.
+* Full Git history and tags must be fetched; local apply requires a clean tree, a Git author and an authenticated push-capable `origin`.
+* Tag rules/rulesets must permit the chosen workflow identity or local operator to create new `java/*` tags, without granting permission to rewrite existing tags.
+* Network access is required to Azul metadata/CDN, Docker Hub, GitHub and Alpine repositories; documentation browser diagrams additionally use jsDelivr.
+
+== Least-privilege matrix
+
+[cols="2,2,3",options="header"]
+|===
+|Operation |Credential |Minimum capability
+|Local build, unit tests and documentation generation |None |Local JDK 21+, Maven and Git; dependency downloads as configured by Maven.
+|Catalog discovery and dry-run |None for public catalogs |Public read access to Azul and Docker Hub; local Git tag reads.
+|CI pull-request verification |`GITHUB_TOKEN` |`contents: read`; no Docker secrets in the verification job, no publication.
+|Scheduled/manual tag apply |Job-scoped `GITHUB_TOKEN` |`contents: write` for new tags; rulesets must allow the bot identity.
+|Reusable native build/merge checkout |Job-scoped `GITHUB_TOKEN` |`contents: read`; publication jobs do not push Git refs.
+|Docker image and index push |`DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` repository secrets |Token with read/write access to `ossyupiik/java`; no delete permission required.
+|Local tag apply over HTTPS |Contextual GitHub account/token via Git credential helper |Fine-grained PAT scoped to this repository with `Contents: write`, or an equivalent approved GitHub App/user credential.
+|Local workflow dispatch |Contextual token used by `gh` |Fine-grained PAT with repository `Actions: write` and repository visibility/access.
+|===
+
+For the combined local apply-and-dispatch example, the token therefore needs both *Contents: write* and *Actions: write* on this repository.
+Fine-grained tokens may require organization approval; authorize SSO where required and use a short expiry.
+If using a classic token for this public repository, `public_repo` is broader than a repository-scoped fine-grained token; private repositories require the appropriate broader access.
+Neither a token scope nor the workflow YAML overrides repository/organization rulesets or an identity's underlying permissions.
+
+The local CLI does not parse `GH_TOKEN`/`GITHUB_TOKEN` itself: it invokes Git, which authenticates through the contextual helper shown in link:getting-started.html[Getting started].
+Simply exporting a token without configuring Git authentication is not sufficient for `git push`.
+An SSH `origin` instead uses its configured SSH key; choose the authentication path deliberately.
+
+== GitHub Actions setup
+
+Set repository Actions secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` for an identity allowed to push the target Docker Hub repository.
+The update job explicitly requests `contents: write`; repository/organization policy must allow this grant and tag creation.
+The reusable release jobs inherit only the explicitly forwarded Docker secrets and have read-only GitHub contents permissions.
+No `packages: write`, `id-token: write`, GitHub PAT or `workflow` scope is needed for the normal scheduled release path.
+The Docker destination is Docker Hub, not GitHub Container Registry.
+This setup does not deploy the documentation to GitHub Pages and needs no `pages: write` permission.
+
+WARNING: Manual dispatch defaults to dry-run, but the Wednesday schedule explicitly applies updates automatically once the workflow is enabled on the default branch.
+Disable the workflow/schedule until secrets, permissions and the first reviewed dry-run are ready.
+
+== Why tag pushes do not start publication
+
+GitHub suppresses ordinary push-triggered workflow runs for pushes authenticated with the repository's `GITHUB_TOKEN`.
+The updater therefore invokes `java-release.yml` directly through a reusable workflow matrix in the same run; it does not rely on a tag-push event.
+This avoids an additional long-lived PAT solely for workflow chaining.
+The new publisher is reusable (`workflow_call`), not tag-push-triggered, and the legacy generic DockerHub workflow excludes Java refs.
+Consequently, even a local PAT-authenticated tag push must be followed by the explicit manual `Java update` dispatch to reconcile/build pending tags.
+
+== Secret handling
+
+* Keep tokens in GitHub secrets, a credential manager or a short-lived process environment; never in annotated manifests, POMs, remote URLs or plan files.
+* Do not run credential examples with `set -x` or print environment variables.
+* Public catalog HTTP requests carry no GitHub or Docker credentials; the Fusion curl logger masks sensitive headers and omits payloads.
+* Scope local helper overrides to a subshell and avoid persistent plaintext Git credential stores.
+* Restrict who can edit workflow files and create release tags: tag manifests pin inputs but are not cryptographic signatures or a substitute for trusted source review.
+* Protect Docker Hub tags from unrelated writers; a permitted external writer can bypass workflow immutability checks.
+* External Actions are pinned to full commit SHAs with version comments; Dependabot proposes weekly action and internal Maven dependency updates for review, without automatic merging.
+* Review action updates as executable code changes; SHA pinning prevents a moved tag from silently changing execution but does not establish that an action is trustworthy.
+* The generic JRE base image defaults to root; downstream application images should explicitly select an appropriate non-root identity.
+
+== Repository-side protections
+
+These settings are not applied by the workflow YAML and must be configured by a repository administrator:
+
+* Protect `main` with reviewed pull requests and suitable required checks; require native Java image verification for Java image changes.
+* Account for path-filtered workflows when choosing required checks: an unrelated pull request will not start Java image verification.
+* Protect `java/*` tags against updates and deletions, while permitting the intended updater identity to create them.
+* Restrict workflow edits and Actions permissions to trusted maintainers and approved actions/runners.
+* Limit Docker Hub credentials to the intended repositories, rotate them, and restrict unrelated writers to immutable image tags.
+
+The separate `Java image verification` workflow builds fixed test inputs on native AMD64 and ARM64 for Java image pull requests, pushes to `main`, and manual runs.
+It uses read-only repository access, does not persist checkout credentials, and has no registry login or publication secrets.
+The pinned fixtures exercise the real Dockerfile and smoke regression tests before release; they are not the production updater's choice of latest versions.
+Review changes to the fixture versions, archive checksums and Alpine index digest together in `.github/workflows/java-verify.yml`.
+
+== Troubleshooting
+
+[cols="2,3",options="header"]
+|===
+|Symptom |Check
+|Git push forbidden |Correct HTTPS helper/SSH identity, token repository selection/expiry, Contents write, organization approval/SSO and tag rules.
+|Dispatch returns 403/404 |Correct repository and workflow on `main`, Actions write and Actions enabled; token must see the repository.
+|Tags exist but no images |Local apply only creates tags; explicitly dispatch apply or rerun a failed scheduled run; inspect native jobs and `remaining`.
+|Docker login/push denied |Both secret names, username ownership, token expiry and read/write access to `ossyupiik/java`.
+|Reusable job skipped |Repository/ref gate, dry-run flag, empty matrix, or failed discovery/tag apply.
+|ARM64 job not starting |Runner availability, Actions policy and billing/concurrency limits.
+|Immutable input/index conflict |Investigate existing tags/digests and pinned manifest; do not force-push or delete release intent to suppress the error.
+|===
+
+References: https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow[GitHub workflow triggering] and https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens[Fine-grained PAT permissions].

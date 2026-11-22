@@ -1,0 +1,77 @@
+name: Java image verification
+
+on:
+  pull_request:
+    paths:
+      - 'java/**'
+      - '.github/workflows/java-verify.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'java/**'
+      - '.github/workflows/java-verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: java-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-26.04
+            architecture: amd64
+            archive: zulu25.32.21-ca-jre25.0.2-linux_musl_x64.tar.gz
+            sha256: f54b48abecdecabe5c182d43ee2466960a95158f8c719b1a065d792c3d66ffe2
+          - runner: ubuntu-26.04-arm
+            architecture: arm64
+            archive: zulu25.32.21-ca-jre25.0.2-linux_musl_aarch64.tar.gz
+            sha256: d3280fc584a31ccee3947c6717609764a30c4af098ec0691c4615a25e4ae69c5
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    # Fixed test fixtures, not release selection or floating upstream discovery.
+    # Azul metadata package UUIDs: b295e888-9815-4b58-886d-2bf2c4e44e3d (amd64),
+    # 8412800b-6f36-4351-855c-83a65c14c110 (arm64).
+    env:
+      JAVA_VERSION: 25.0.2+10
+      ALPINE_VERSION: 3.23.3
+      ALPINE_IMAGE: alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: zulu
+          java-version: '21'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build native test image without publishing
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./java
+          file: ./java/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: java-verify:smoke
+          build-args: |
+            ALPINE_IMAGE=${{ env.ALPINE_IMAGE }}
+            DISTRIBUTION_URL=https://cdn.azul.com/zulu/bin/${{ matrix.archive }}
+            DISTRIBUTION_SHA256=${{ matrix.sha256 }}
+      - name: Run native smoke and negative regression tests
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          classes=$(mktemp -d)
+          trap 'rm -rf "$classes"' EXIT
+          javac --release 21 -d "$classes" java/test/SmokeTest.java java/test/SmokeTestTest.java
+          java -cp "$classes" SmokeTestTest java-verify:smoke "$JAVA_VERSION" "$ALPINE_VERSION" "$ARCHITECTURE"

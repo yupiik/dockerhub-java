@@ -1,0 +1,303 @@
+name: Java release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Annotated java/... release tag containing the immutable manifest
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: java-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    if: github.repository == 'yupiik/dockerhub-java'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - runner: ubuntu-26.04
+            architecture: amd64
+          - runner: ubuntu-26.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      ARCHITECTURE: ${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Require annotated tag at HEAD merged into main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^java/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          test "$(git rev-parse HEAD)" = "$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: zulu
+          java-version: '21'
+      - name: Package standalone Fusion CLI
+        run: mvn -B -f _internal/pom.xml package
+      - name: Verify strict tag manifest and resolve native build inputs
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar _internal/target/java-updater.jar release \
+            --release-tag "$RELEASE_TAG" \
+            --release-architecture "$ARCHITECTURE" \
+            --release-output _internal/target/build.json
+          jq -e '
+            . as $build |
+            all(["sourceRevision", "imageTag", "repository", "alpineImage", "url", "sha256", "javaVersion", "alpineVersion"][];
+              . as $key | $build[$key] | type == "string" and length > 0 and (test("[[:cntrl:]]") | not)) and
+            (.sourceRevision | test("^[0-9a-f]{40}$")) and
+            (.imageTag | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")) and
+            (.repository | test("^[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$")) and
+            (.sha256 | test("^[0-9a-f]{64}$")) and
+            (.url | startswith("https://"))
+          ' _internal/target/build.json
+          test "$(jq -r '.sourceRevision' _internal/target/build.json)" = "$(git rev-parse HEAD)"
+          jq -r '{sourceRevision, imageTag, repository, alpineImage, url, sha256, javaVersion, alpineVersion} |
+            to_entries[] | "\(.key)=\(.value)"' _internal/target/build.json >> "$GITHUB_OUTPUT"
+          key="${RELEASE_TAG//[^a-zA-Z0-9_-]/-}"
+          hash=$(printf '%s' "$RELEASE_TAG" | sha256sum | cut -c1-12)
+          printf 'artifact-key=java-%s-%s\n' "$key" "$hash" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Reuse a published architecture instead of overwriting it on retry
+        id: existing
+        env:
+          REPOSITORY: ${{ steps.release.outputs.repository }}
+          IMAGE_TAG: ${{ steps.release.outputs.imageTag }}
+          SOURCE_REVISION: ${{ steps.release.outputs.sourceRevision }}
+          ALPINE_IMAGE: ${{ steps.release.outputs.alpineImage }}
+          ARCHIVE_SHA256: ${{ steps.release.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          ref="$REPOSITORY:$IMAGE_TAG-$ARCHITECTURE"
+          if docker buildx imagetools inspect --raw "$ref" > /tmp/native.json 2> /tmp/inspect-error; then
+            docker pull "$ref"
+            docker tag "$ref" java-release:smoke
+            printf 'reuse=true\n' >> "$GITHUB_OUTPUT"
+          elif grep -Eiq 'not found|no such manifest|manifest unknown' /tmp/inspect-error; then
+            # A deleted architecture alias can still be restored from the existing index.
+            if docker buildx imagetools inspect --raw "$REPOSITORY:$IMAGE_TAG" > /tmp/index.json 2> /tmp/inspect-error; then
+              jq -e '.manifests | type == "array" and length > 0' /tmp/index.json
+              digest=$(jq -r --arg arch "$ARCHITECTURE" '.manifests[] |
+                select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' /tmp/index.json)
+              if [ -z "$digest" ]; then
+                printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+              docker pull "$REPOSITORY@$digest"
+              docker tag "$REPOSITORY@$digest" java-release:smoke
+              printf 'reuse=true\n' >> "$GITHUB_OUTPUT"
+            elif grep -Eiq 'not found|no such manifest|manifest unknown' /tmp/inspect-error; then
+              printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              cat /tmp/inspect-error >&2
+              exit 1
+            fi
+          else
+            cat /tmp/inspect-error >&2
+            exit 1
+          fi
+          docker image inspect java-release:smoke | jq -e \
+            --arg revision "$SOURCE_REVISION" --arg version "$IMAGE_TAG" \
+            --arg alpine "$ALPINE_IMAGE" --arg sha "$ARCHIVE_SHA256" '
+              .[0].Config.Labels |
+              .["org.opencontainers.image.revision"] == $revision and
+              .["org.opencontainers.image.version"] == $version and
+              .["io.yupiik.java.alpine"] == $alpine and
+              .["io.yupiik.java.archive-sha256"] == $sha'
+      - name: Build native image locally with pinned manifest inputs
+        if: steps.existing.outputs.reuse != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./java
+          file: ./java/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: java-release:smoke
+          labels: |
+            org.opencontainers.image.revision=${{ steps.release.outputs.sourceRevision }}
+            org.opencontainers.image.version=${{ steps.release.outputs.imageTag }}
+            io.yupiik.java.alpine=${{ steps.release.outputs.alpineImage }}
+            io.yupiik.java.archive-sha256=${{ steps.release.outputs.sha256 }}
+          build-args: |
+            ALPINE_IMAGE=${{ steps.release.outputs.alpineImage }}
+            DISTRIBUTION_URL=${{ steps.release.outputs.url }}
+            DISTRIBUTION_SHA256=${{ steps.release.outputs.sha256 }}
+      - name: Smoke test on native architecture before any push
+        env:
+          JAVA_VERSION: ${{ steps.release.outputs.javaVersion }}
+          ALPINE_VERSION: ${{ steps.release.outputs.alpineVersion }}
+        run: |
+          set -euo pipefail
+          java java/test/SmokeTest.java java-release:smoke "$JAVA_VERSION" "$ALPINE_VERSION" "$ARCHITECTURE"
+      # Push the exact loaded image that passed the native smoke test, without rebuilding.
+      - name: Push smoke-tested architecture tag
+        id: push
+        env:
+          REPOSITORY: ${{ steps.release.outputs.repository }}
+          IMAGE_TAG: ${{ steps.release.outputs.imageTag }}
+        run: |
+          set -euo pipefail
+          ref="$REPOSITORY:$IMAGE_TAG-$ARCHITECTURE"
+          docker tag java-release:smoke "$ref"
+          docker push "$ref"
+          digest=$(docker image inspect "$ref" --format '{{json .RepoDigests}}' |
+            jq -er --arg prefix "$REPOSITORY@" '.[] | select(startswith($prefix)) | split("@")[1]')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Record immutable architecture digest and release identity
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p _internal/target/digests
+          jq --arg digest "$DIGEST" --arg architecture "$ARCHITECTURE" \
+            '{repository, imageTag, sourceRevision, digest: $digest, architecture: $architecture}' \
+            _internal/target/build.json > "_internal/target/digests/$ARCHITECTURE.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.release.outputs.artifact-key }}-${{ matrix.architecture }}
+          path: _internal/target/digests/${{ matrix.architecture }}.json
+          if-no-files-found: error
+          overwrite: true
+
+  merge:
+    needs: native
+    if: github.repository == 'yupiik/dockerhub-java'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      ARCHITECTURE: amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Verify release checkout and main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^java/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          test "$(git rev-parse HEAD)" = "$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: zulu
+          java-version: '21'
+      - name: Package standalone Fusion CLI
+        run: mvn -B -f _internal/pom.xml package
+      - name: Resolve merge identity from the verified amd64 release manifest
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar _internal/target/java-updater.jar release \
+            --release-tag "$RELEASE_TAG" \
+            --release-architecture "$ARCHITECTURE" \
+            --release-output _internal/target/build.json
+          jq -e '
+            (.sourceRevision | test("^[0-9a-f]{40}$")) and
+            (.imageTag | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")) and
+            (.repository | test("^[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$"))
+          ' _internal/target/build.json
+          test "$(jq -r '.sourceRevision' _internal/target/build.json)" = "$(git rev-parse HEAD)"
+          jq -r '{repository, imageTag, sourceRevision} | to_entries[] | "\(.key)=\(.value)"' \
+            _internal/target/build.json >> "$GITHUB_OUTPUT"
+          key="${RELEASE_TAG//[^a-zA-Z0-9_-]/-}"
+          hash=$(printf '%s' "$RELEASE_TAG" | sha256sum | cut -c1-12)
+          printf 'artifact-key=java-%s-%s\n' "$key" "$hash" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ${{ steps.release.outputs.artifact-key }}-*
+          path: _internal/target/digests
+          merge-multiple: true
+      - name: Require both digests to belong to this exact CLI release
+        run: |
+          set -euo pipefail
+          jq -se --slurpfile build _internal/target/build.json '
+            length == 2 and
+            (map(.architecture) | sort == ["amd64", "arm64"]) and
+            all(.[];
+              .repository == $build[0].repository and
+              .imageTag == $build[0].imageTag and
+              .sourceRevision == $build[0].sourceRevision and
+              (.digest | test("^sha256:[0-9a-f]{64}$")))
+          ' _internal/target/digests/*.json
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Merge immutable digests without floating aliases
+        env:
+          REPOSITORY: ${{ steps.release.outputs.repository }}
+          IMAGE_TAG: ${{ steps.release.outputs.imageTag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t refs < <(jq -r '"\(.repository)@\(.digest)"' _internal/target/digests/*.json)
+          jq -s 'map({os: "linux", architecture, digest}) | sort_by(.os, .architecture, .digest)' \
+            _internal/target/digests/*.json > /tmp/expected-manifests.json
+          if docker buildx imagetools inspect --raw "$REPOSITORY:$IMAGE_TAG" > /tmp/existing-index.json 2> /tmp/inspect-error; then
+            # Only complete a duplicate-free subset of the exact expected platform/digest mapping.
+            jq -e --slurpfile expected /tmp/expected-manifests.json '
+              [.manifests[] | {os: .platform.os, architecture: .platform.architecture, digest}] as $actual |
+              ($actual | unique | length) == ($actual | length) and
+              ($actual - $expected[0] | length) == 0
+            ' /tmp/existing-index.json
+            count=$(jq '.manifests | length' /tmp/existing-index.json)
+          elif grep -Eiq 'not found|no such manifest|manifest unknown' /tmp/inspect-error; then
+            count=0
+          else
+            cat /tmp/inspect-error >&2
+            exit 1
+          fi
+          if [ "$count" -lt 2 ]; then
+            docker buildx imagetools create --tag "$REPOSITORY:$IMAGE_TAG" "${refs[@]}"
+          fi
+          docker buildx imagetools inspect --raw "$REPOSITORY:$IMAGE_TAG" > _internal/target/index.json
+          jq -e --slurpfile expected /tmp/expected-manifests.json '
+            [.manifests[] | {os: .platform.os, architecture: .platform.architecture, digest}] |
+              sort_by(.os, .architecture, .digest) == $expected[0]
+          ' _internal/target/index.json
+          printf 'Published `%s:%s` with verified linux/amd64 and linux/arm64 manifests.\n' \
+            "$REPOSITORY" "$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,52 @@
+= Java image updater
+:minisite-breadcrumb: Overview
+:minisite-index: 100
+:minisite-index-title: Java image updater
+:minisite-index-description: Operating guide for latest-per-major Zulu JRE and Alpine releases.
+
+The internal Maven project keeps `ossyupiik/java` current with the latest ordinary Zulu musl JRE patch/build of every available Java major >=17 and the latest stable Alpine release supporting Linux AMD64 and ARM64.
+It does not publish JDKs, backfill intermediate patches or build a Java-by-Alpine version cross-product.
+
+== Operator guide
+
+* link:getting-started.html[Getting started]: build, inspect a dry-run, apply locally and dispatch publication.
+* link:flow.html[Discovery and release flow]: selection policy, pinned tags, native builds and recovery.
+* link:permissions.html[Permissions and tokens]: prerequisites, least privilege and troubleshooting.
+
+== Safety boundaries
+
+[cols="1,3",options="header"]
+|===
+|Operation |Effect
+|Build and tests |Creates local Maven outputs; tests use local fixtures and a temporary local Git remote.
+|Dry-run |Reads public catalogs and local Git tags; writes a local JSON plan only.
+|Local apply |Rediscovers, creates annotated Git tags at HEAD and pushes them to `origin`; no Docker publication.
+|Workflow apply |Creates/reconciles tags, builds and tests native images, pushes architecture tags, then merges the multi-platform index.
+|Documentation build |Generates this local site; no site deployment, Git push or image publication.
+|===
+
+The Wednesday schedule runs at *05:23 UTC* and applies automatically when enabled on the default branch.
+Manual `Java update` dispatch on `main` defaults to dry-run.
+Pull requests run read-only Maven verification and cannot publish through this workflow.
+Review a first manual dry-run before leaving the schedule enabled.
+
+NOTE: Considering an old Java major does not imply it still receives upstream security support.
+
+== Implementation map
+
+[cols="1,3",options="header"]
+|===
+|Component |Responsibility
+|`RemoteCatalog` |Paginated Azul/Docker Hub discovery and official archive metadata/checksums.
+|`Planner` |Latest-per-major numeric selection, two-architecture eligibility, retries and deterministic respins.
+|`GitTags` |Validate, read and create immutable annotated release manifests; push without force.
+|Fusion `update` command |Plan by default; explicitly apply with `--update-dry-run false`.
+|Fusion `release` command |Validate the pinned tag/checkout and export per-architecture build arguments.
+|`java-update.yml` |Schedule/manual discovery and direct reusable-workflow invocation.
+|`java-release.yml` |Native AMD64/ARM64 build, smoke test, reuse/recovery and digest-based merge.
+|`java/Dockerfile` |One checksum-verified JRE build for both architectures.
+|===
+
+The project uses Fusion CLI, JSON and HTTP client modules, with a curl logger masking sensitive headers and omitting payloads.
+The default HTTP request timeout is one minute (`PT1M`), configurable per updater invocation.
+Catalog APIs are public and do not receive GitHub or Docker credentials.

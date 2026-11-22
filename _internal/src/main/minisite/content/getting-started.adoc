@@ -1,0 +1,109 @@
+= Getting started
+:minisite-breadcrumb: Overview[index.html] > Getting started
+
+== Build
+
+Install JDK 21+, Maven and Git, and run from the repository root.
+Use a clean committed checkout containing the updater, Dockerfile, smoke runner and workflows; publication requires its source commit to be merged into `main`.
+
+[source,sh]
+----
+mvn -f _internal/pom.xml verify
+git fetch origin --tags
+----
+
+Docker is not required for planning, local tag creation, or the Maven unit tests.
+Native builds run on the workflow runners.
+
+== Validate the plan
+
+[source,sh]
+----
+java -jar _internal/target/java-updater.jar update --update-dry-run true --update-limit 100
+cat _internal/target/plan.json
+----
+
+No publishing token is needed for public discovery.
+The plan contains pinned `releases`, a reusable-workflow `matrix` and the number `remaining` beyond the selected batch.
+Inspect Java/Alpine versions, both archive URLs and hashes, Alpine digest, source commit and repository before applying.
+No tags, Docker images or authoritative remote state are changed by dry-run.
+
+[cols="1,1,3",options="header"]
+|===
+|Option |Default |Meaning
+|`--update-dry-run` |`true` |Only explicit `false` creates/pushes tags.
+|`--update-limit` |`10` |Maximum releases per invocation, range 1-100; retries also count.
+|`--update-timeout` |`PT1M` |Default HTTP request timeout as an ISO-8601 duration.
+|`--update-output` |`_internal/target/plan.json` |Local output path relative to the checkout, or an absolute path.
+|`--update-root` |`.` |Repository checkout root, not the Maven module directory.
+|`--update-revision` |HEAD |Must equal the current HEAD; new tags pin this revision.
+|`--update-repository` |`ossyupiik/java` |Docker Hub repository; workflow gates/secrets must match before changing it.
+|===
+
+IMPORTANT: Apply performs fresh discovery; it does not accept or execute the saved dry-run JSON as an approval artifact.
+Review again if upstream changes between inspection and apply.
+
+== Apply with a contextual GitHub token
+
+Use an HTTPS GitHub `origin`, a configured Git author, and an authorized account/token as described in link:permissions.html[Permissions and tokens].
+GitHub CLI must already be authenticated (`gh auth login`).
+The following subshell passes a contextual token through Git's credential helper without storing it in repository configuration or remote URLs.
+
+[source,sh]
+----
+(
+  set -eu
+  GH_TOKEN="$(gh auth token --hostname github.com)"
+  test -n "$GH_TOKEN"
+  export GH_TOKEN
+  export GIT_TERMINAL_PROMPT=0
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_0=credential.helper
+  export GIT_CONFIG_VALUE_0=
+  export GIT_CONFIG_KEY_1=credential.https://github.com.helper
+  export GIT_CONFIG_VALUE_1='!gh auth git-credential'
+  git fetch origin --tags
+  java -jar _internal/target/java-updater.jar update --update-dry-run false --update-limit 100
+  gh workflow run java-update.yml --repo yupiik/dockerhub-java --ref main -f dry-run=false
+)
+----
+
+Alternatively, inject an approved fine-grained PAT as `GH_TOKEN` using your secret manager instead of calling `gh auth token`.
+Never enable shell tracing around credentials or supply a token in a URL/CLI argument.
+If `GIT_CONFIG_COUNT` is already used by your environment, run this in a fresh shell or deliberately merge its existing entries rather than overwriting required settings.
+SSH remotes use SSH authentication instead of this HTTPS helper.
+
+WARNING: Apply creates and pushes release tags immediately and requires a clean working tree including untracked files.
+There is no force-push mode and the local CLI does not publish Docker images.
+
+The explicit workflow dispatch is necessary: local tag pushes do not directly invoke the new publisher, and the legacy generic workflow excludes Java refs.
+The manual apply run reconciles pending tags and may also discover newly available releases; it is not restricted to the preceding local plan.
+Its default batch limit is ten, so inspect the uploaded `java-update-plan` artifact and summary for `remaining`, then dispatch again when needed.
+Monitor the `Java update` run and its reusable `Java release` jobs in the Actions UI.
+
+== Build and validate this documentation
+
+[source,sh]
+----
+mvn -f _internal/pom.xml -Pminisite package
+node _internal/src/test/minisite/validate.mjs _internal/target/minisite
+mvn -f _internal/pom.xml -Pminisite yupiik-tools:serve-minisite
+----
+
+Open http://localhost:4200/ in a browser; stop the local preview with Ctrl+C.
+The optional `minisite` Maven profile runs Yupiik Tools `minisite` during `prepare-package` and writes `_internal/target/minisite` without deploying it.
+The rendering validator requires Node.js 22+ with native WebSocket support and Google Chrome (`CHROME_BIN` can select its executable).
+It checks the generated pages at desktop/mobile sizes, diagram SVGs, browser errors and local links, and saves screenshots under `_internal/target/minisite-rendering`.
+Mermaid is pinned to 11.12.2 and loaded from jsDelivr; diagram rendering requires access to that CDN in addition to the template's external assets.
+The textual descriptions remain readable if JavaScript is unavailable.
+
+The publication and quick-start shell boundaries also have offline regression checks (Bash and `jq` are needed):
+
+[source,sh]
+----
+java _internal/src/test/workflows/JavaReleaseWorkflowTest.java
+mvn -f _internal/pom.xml -Dtest=QuickStartTest test
+----
+
+These execute the actual workflow shell blocks and documented apply snippets with stub commands, without credentials, a Docker daemon or registry writes.
+They run alongside Maven verification in the pull-request workflow; the Chrome check remains an explicit documentation validation command.
