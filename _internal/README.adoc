@@ -1,0 +1,101 @@
+= Java image updater: getting started
+
+Requires JDK 21+, Maven and Git; run these commands from the *repository root*, not `_internal`.
+For apply, use a clean checkout of a commit already merged into `main`, containing the updater and workflows, with an HTTPS GitHub `origin` and all tags fetched.
+
+== Build
+
+[source,sh]
+----
+mvn -f _internal/pom.xml verify
+----
+
+== Validate what would be done
+
+[source,sh]
+----
+git fetch origin --tags
+java -jar _internal/target/java-updater.jar update --update-dry-run true --update-limit 100
+cat _internal/target/plan.json
+----
+
+This selects only the latest ordinary Zulu musl *JRE* patch/build per Java major >=17 and the latest stable Alpine supporting AMD64 and ARM64.
+Dry-run is the default: it writes a local plan but creates no tags or images.
+Check the pinned inputs, `releases` and `remaining`; apply rediscovers upstream rather than executing the saved plan verbatim.
+
+== Explicitly apply locally with a contextual GitHub token
+
+Authenticate GitHub CLI (`gh auth login`) using an account/token permitted to create `java/*` tags in `yupiik/dockerhub-java`.
+A fine-grained PAT needs repository *Contents: write* for apply and *Actions: write* for the dispatch below, subject to organization approval/SSO and tag rules.
+Set a Git author first if not already configured (`git config user.name` and `git config user.email`).
+
+[source,sh]
+----
+(
+  set -eu
+  # Scope the token and Git credential helper to this subshell, not Git config or the remote URL.
+  GH_TOKEN="$(gh auth token --hostname github.com)"
+  test -n "$GH_TOKEN"
+  export GH_TOKEN
+  export GIT_TERMINAL_PROMPT=0
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_0=credential.helper
+  export GIT_CONFIG_VALUE_0=
+  export GIT_CONFIG_KEY_1=credential.https://github.com.helper
+  export GIT_CONFIG_VALUE_1='!gh auth git-credential'
+  git fetch origin --tags
+  java -jar _internal/target/java-updater.jar update --update-dry-run false --update-limit 100
+  # Tag pushes alone do not publish: explicitly reconcile and build through Actions.
+  gh workflow run java-update.yml --repo yupiik/dockerhub-java --ref main -f dry-run=false
+)
+----
+
+WARNING: `--update-dry-run false` creates and pushes immutable release tags; it is not a force-push option and never rewrites existing tags.
+The token is inherited by Git through the temporary credential helper, not consumed by Fusion or sent to public catalog APIs.
+Do not use shell tracing, put tokens in command arguments/remote URLs, or paste them into logs.
+The local CLI does *not* build/push Docker images; the dispatched workflow needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` with push access to `ossyupiik/java`.
+The workflow has a default batch of ten; inspect `remaining` and dispatch again if necessary.
+
+== Additional offline checks
+
+Maven runs the CLI, quick-start and repository setup tests with JUnit 6; the shell-based checks require Bash and jq in addition to JDK 21+.
+Run them from the repository root:
+
+[source,sh]
+----
+mvn -f _internal/pom.xml test
+java _internal/src/test/workflows/JavaReleaseWorkflowTest.java
+mvn -f _internal/pom.xml -Ppackaging-tests test
+----
+
+The workflow check also compiles both smoke-test sources for Java 21 and runs the smoke runner's positive and negative regression cases against a stubbed Docker command.
+The opt-in `packaging-tests` profile runs only `PackagingTest`, which runs Maven package twice without cleaning, verifies that Shade receives a fresh thin JAR, checks merged application/dependency Fusion schemas and configuration metadata, and exercises CLI command discovery without accessing catalogs.
+It is excluded from ordinary test runs and its nested builds skip tests to avoid recursive execution.
+Packaging can download Maven dependencies if they are not already cached.
+These checks do not require a Docker daemon, credentials or registry access; they do not replace native image smoke tests.
+Pull-request CI runs these checks and builds the minisite alongside the CLI tests.
+Changes under `java/` additionally run native AMD64/ARM64 Docker builds and smoke regression tests in `java-verify.yml`, using fixed test inputs without publication credentials.
+Maintain its Alpine index digest, per-architecture archive URL/checksum and expected versions together; these fixtures intentionally do not follow latest-version discovery.
+External action SHAs and internal Maven dependencies receive weekly Dependabot update proposals, which still require review.
+
+The JUnit tests live under `_internal/src/test/java` and can also be selected individually, for example:
+
+[source,sh]
+----
+mvn -f _internal/pom.xml -Dtest=QuickStartTest test
+----
+
+These tests exercise ref validation, idempotent GitHub release creation, publication ordering, action pins and native PR job permissions; PR CI runs them too.
+The legacy publisher creates GitHub releases only for tags and only after successful image publication; branch publication never creates a release.
+
+== Full documentation
+
+[source,sh]
+----
+mvn -f _internal/pom.xml -Pminisite yupiik-tools:serve-minisite
+----
+
+Open http://localhost:4200/ for flow diagrams, input selection, permissions/token matrix and recovery procedures.
+The goal renders and serves the minisite locally; stop it with Ctrl+C.
+The documentation build does not publish the site or images and needs no publishing token.
+See `src/main/minisite/content/` for the AsciiDoc sources and `src/test/minisite/validate.mjs` for Google Chrome headless rendering validation.

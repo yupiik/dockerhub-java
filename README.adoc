@@ -4,9 +4,92 @@
 
 image::https://img.shields.io/docker/v/ossyupiik/java?color=00b2ef&label=Last%20Release&logoColor=00b2ef&logo=data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgoAAAANSUhEUgAAACAAAAAqCAYAAADS4VmSAAAAAXNSR0IArs4c6QAABGdJREFUWEedmF2I3FQUx%2F9nZrYzq7ttMtuK32B90WpFEbtUW2T7UqqbjIgM%2BKQP%2BmAfBUEFP0H7oo%2BiIgg%2BqRUqk%2BwWRXTFj9UWoVIp7UN1H9QitTvJMtpOd3dydDI7k9zk3syd5C25557zO1%2F3I4S8z3xzJzp0MpweBDfioanf86iiPJPCOY7HwlzbzKUr1yQ4XgAgOZdhm4VRHcoLIHrft5ojCqMDiKF%2FGlQkcOfNgecjQowGcKS5ByX6NmUsDrXOe%2FFw9TvdVIwGEDdUNiawn%2F4NDR0%2BP4HKWCtPFPQBXP8EmO9UGonDEf0My7hLJwr6AHEDqjzryCSo9ACEtuM%2FYVevl3rneH8D2LoxptWWugBR2w2r8hGjMBxAaDt6BrbxRmZuHf81gJ%2FXLchsgEbzQRDN6SobyMWhmWdRq86roLMB4ooKVMWs4Q0Uuf4jYP4kfKfONKytxwdjR1vbsL5%2BXgdcDeD6J8G8U6vtukLJ2hDb8hdYxh2yKKgBsorJ9QJwYjMiMKzEZqRRkHKAhrcKwliPmC7ANrYN6A%2Bf2oTKtZelOW1%2FUUK93oml6RKYK%2BE7Yw01c1NyXhpggSto%2BZe0Qh%2FgMQBFFPC%2BlvykMY4Zasch0gBC4RUfx%2BzmDwYT5lem0Ql%2BTBkTWjW4HfbUqVhHvALgRRWgCDDXmkGw%2FpWWN%2BXLE9h%2FdW8z%2BtQzUETUIVkFWSjtw%2BzkQt%2BGCBD3pG2UUKcon43mCRBpbkZYhGXeF9UNj6PiX5Q5FgE4zUWAdmt5n2czEtLEP8Cu3huWeCxX6vVenHwadnWHtAsc7zcAN43iRA9gmAGNftZ05A8A18UBCQtcQstf06JmfhS16kdS7%2FsfHf9ZgA9p6Zs0xkjwngsHUNvyWeTNch0ofKxUpiIRNiO6BzXjp4Fow38OxK9HXZC8YDAfRK36dio1JaOCB0i%2BAiZBjvx1FcbKn8MyxWOZ670MxkviQuR4vwLYnnKG2QeRsfG9A9ssZYY%2Ba9BpXgRoPCVCWOwVoXvhFnDxtFLHsFOQTirS1rfDNpbSS3HD64Agv2JR8VZYm88MKcJ9AH8plWEEqJlFMQVq%2Bq8B3K8Y%2Fga2KY45XrfQ7s6Ea%2F9zBeo3RBud5IIJzPmmePJZ2QUOjuXKf6GzA0FpL8DvqjpJTIG7%2FCq48EIoTPQULOMdwXCyY%2BRU6eO4cDrCDCyzG92eGaUBWeE5%2FlsAH8yMBvMh1KrRqbgvrFhNIwDXOwfGNdJQOZ4PYMtIaWAso2b2LynJHxrHYZvTsQgwwfG7Px16T9f7bi0E3FQbDZ4ECu%2BF490lmuhDpWz%2FIiuJgmQzoiWAox1N1LoK2yyHn5zlJ2IA0dnf9dfArFq0ugeYK%2BOOSgAkfhBcWKYt1osCoC%2Fk%2BsfAvCszbbZJQwCC3bCnojNgXJsqAkmLzsoBIDgqBRkAuP5ZMN88EGqfK6N%2B22omvS5AX8nCUgUtI74IfQ%2Fb3DP8cqqiGBVAoSc%2FQFiIG%2F8K825W%2F%2Bv4D2sg4qMfRFPFAAAAAElFTkSuQmCC[]
 
-A docker image for Java >=17 based on link:https://www.azul.com/downloads/openjdk/[Zulu JDK] using Alpine base image:
+A docker image for Java >=17 based on the link:https://www.azul.com/downloads/openjdk/[Zulu JRE] using Alpine base image:
 
 https://hub.docker.com/r/ossyupiik/java/tags
+
+=== Automated JRE releases
+
+The standalone Maven project in `_internal` uses Yupiik Fusion CLI, JSON and HTTP client modules.
+See link:_internal/README.adoc[the three-step getting started guide] and the link:_internal/src/main/minisite/content/index.adoc[operator minisite sources] for the release flow, contextual token setup and permissions.
+Build the browsable documentation with `mvn -f _internal/pom.xml -Pminisite package` and serve `_internal/target/minisite`.
+It requires a host JDK 21 or later; the published runtimes start at Java 17.
+It discovers ordinary GA, community-available musl *JRE* archives for AMD64 and ARM64 from Azul and stable Alpine tags from Docker Hub.
+JDK, JavaFX, CRaC, early-access and glibc distributions are excluded.
+All catalog pages are read, numeric versions are compared numerically, and HTTP errors abort discovery rather than treating an unavailable catalog as empty.
+HTTP requests use Fusion's curl logger without response payloads, with sensitive headers masked and a configurable one-minute default timeout.
+The public catalog requests do not need credentials.
+
+Only the latest Java patch/build *per Java major >=17* is paired with the latest stable Alpine release supporting both architectures.
+There is no intermediate-patch backfill and no Java-patch by Alpine-patch cross-product.
+For example, if Java 21.0.2 and Alpine 3.20.0 are latest, discovery queues only `21.0.2-alpine3.20.0`, not every intervening 21.0.1/21.0.2 and 3.19.x/3.20.x combination.
+If the newest Java release/build is not available on both architectures, that major is deferred rather than falling back to an older patch.
+All available majors, including upstream end-of-life majors, are considered; discovery is not a promise of ongoing upstream security support.
+Legacy floating tags such as `21.0.1-alpine3` cannot identify an exact Alpine patch and do not suppress a new fully versioned release.
+A numerically newer existing Java or Alpine tag prevents a downgrade when upstream metadata is stale.
+
+The annotated Git tag `java/JAVA-alpineALPINE` contains a JSON build manifest with the source commit, both archive URLs and SHA-256 checksums, and the exact Alpine version and multi-platform index digest.
+New tags are never force-pushed or rewritten.
+An upstream archive or Alpine digest respin with the same public versions gets a deterministic `-r<12-hex-fingerprint>` suffix instead of replacing the original managed release.
+Existing completed, unmanaged exact-version indexes are left untouched because their original inputs cannot be recovered safely.
+Git tags and Docker Hub, not a cache, are the source of truth.
+Already-pinned incomplete releases are retried even if newer upstream versions have appeared; this repairs an existing release, not a new historical backfill.
+A managed release is complete only when its multi-platform tag and both architecture tags are present.
+
+Build, test and discover locally from the repository root:
+
+[source,sh]
+----
+mvn -f _internal/pom.xml verify
+java -jar _internal/target/java-updater.jar update --update-dry-run true
+----
+
+Dry-run is the default and writes only `_internal/target/plan.json`; it does not create or push tags or publish images.
+The plan includes pinned manifests, a GitHub Actions matrix, and the number of remaining releases beyond the default batch limit of ten.
+Use `--update-limit 20` to change the batch size, `--update-timeout PT2M` to override the HTTP timeout, or `--update-output /tmp/java-plan.json` to change the output location.
+
+After reviewing the plan, apply from a clean, committed checkout with all remote tags fetched, a configured Git author, and permission to push new tags to `origin`:
+
+[source,sh]
+----
+git fetch origin --tags
+java -jar _internal/target/java-updater.jar update --update-dry-run false
+----
+
+Apply pins HEAD, creates annotated tags, and pushes them without force.
+It does not itself build or publish Docker images.
+For local tag creation outside the scheduled workflow, rerun the manual Java update workflow with dry-run disabled to publish the pending managed tags.
+Do not apply an uncommitted implementation: release checkouts must contain the CLI, Dockerfile and smoke runner at the pinned commit.
+
+The `Java update` workflow runs every Wednesday at 05:23 UTC and supports manual dispatch on `main`, defaulting to dry-run.
+Pull requests run the offline Maven tests and build the minisite without publishing privileges.
+Java image changes also run the separate `Java image verification` workflow: native AMD64 and ARM64 builds with fixed Alpine/JRE fixtures, followed by smoke and negative regression tests, without registry login or pushing images.
+Its fixture pins are maintained in `.github/workflows/java-verify.yml` and do not affect production discovery.
+External Actions are commit-pinned; `.github/dependabot.yml` proposes weekly action and internal Maven updates for review.
+Review the first manual dry-run's `java-update-plan` artifact before enabling apply.
+Scheduled runs apply automatically once this workflow is on the default branch; disable its schedule until the first reviewed rollout if necessary.
+Apply needs `contents: write` for `GITHUB_TOKEN` and existing `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets with push access to `ossyupiik/java`.
+Repository rules must allow the workflow bot to create `java/*` tags.
+The repository gate is `yupiik/dockerhub-java`; forks must intentionally change it to run publication.
+The updater directly invokes the reusable `Java release` workflow because tags pushed with `GITHUB_TOKEN` do not trigger another workflow.
+The legacy generic DockerHub workflow explicitly excludes Java refs; `java-docker` retains its separate workflow.
+
+Each release builds on native AMD64 and ARM64 runners using the same `java/Dockerfile`, with explicit `ALPINE_IMAGE`, `DISTRIBUTION_URL` and `DISTRIBUTION_SHA256` build arguments.
+There are no floating build defaults or separate ARM64 Dockerfile.
+The archive is checksum-verified before extraction, and only the JRE is copied from the download stage.
+The smoke runner checks the default command, exact Java release, Azul vendor, native JVM architecture, exact Alpine release and absence of `javac` before pushing the tested image.
+The tags are `JAVA-alpineALPINE-amd64`, `JAVA-alpineALPINE-arm64` and `JAVA-alpineALPINE` for the merged multi-platform index.
+No floating Java-major or Alpine-major aliases are moved.
+The merge uses immutable per-architecture digests and verifies the resulting Linux AMD64/ARM64 platform set.
+
+On retry, an already-published architecture is pulled, checked against the pinned input labels and smoke-tested again rather than rebuilt and overwritten.
+A missing architecture alias can also be recovered from its existing multi-platform index.
+Authentication, registry and metadata errors fail closed instead of being interpreted as missing releases.
+Rerun the failed workflow or dispatch Java update with dry-run disabled to reconcile incomplete publications; never delete or move the annotated release tag.
+The Alpine image and JRE archives are pinned, but `apk` runtime packages resolve from Alpine's repositories at the first build, so this is not a bit-for-bit reproducible package snapshot.
+Pin the published multi-platform digest in production.
+Native ARM64 testing and registry merge verification run in CI and require the configured runners and credentials.
+
 
 == Java with Docker CLI
 

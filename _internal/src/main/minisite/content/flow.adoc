@@ -1,0 +1,112 @@
+= Discovery and release flow
+:minisite-breadcrumb: Overview[index.html] > Release flow
+
+== Discovery and planning
+
+++++
+<div class="diagram"><div class="mermaid">
+flowchart TD
+  Start[Wednesday 05:23 UTC or manual dispatch] --> Catalog[Read all Azul and Docker Hub catalog pages]
+  Catalog --> Select[Latest GA musl JRE per Java major 17 and above]
+  Select --> Pair{Newest version and build on both architectures?}
+  Pair -->|No| Defer[Defer this major]
+  Pair -->|Yes| Alpine[Pair with latest stable two-architecture Alpine]
+  Alpine --> Compare[Compare annotated Git manifests and published images]
+  Compare --> Plan[Plan missing releases, respins and incomplete retries]
+  Plan --> Dry{Dry-run?}
+  Dry -->|Yes| Report[Write local JSON plan only]
+  Dry -->|No| Tags[Create or reuse annotated tags and push without force]
+  Tags --> Publish[Directly invoke reusable release workflow]
+</div></div>
+++++
+
+Azul queries require community-available GA packages, `linux-musl`, `jre`, `tar.gz` and `x64`/`aarch64`.
+Exact ordinary JRE filename checks exclude JDK, CRaC, JavaFX, early-access and glibc packages even when the API returns them alongside requested variants.
+Numeric Java version and OpenJDK build ordering select the latest release per major; distribution metadata selects the architecture-specific archive.
+If the latest version/build is absent on either architecture, the major is deferred rather than downgraded to an earlier patch.
+Such ineligible majors are silently omitted from the plan and are not counted in `remaining`, which only counts eligible planned releases beyond the batch limit.
+Alpine selection accepts exact stable `MAJOR.MINOR.PATCH` tags, excludes floating aliases and requires both Linux architectures.
+Attestation descriptors with unknown platforms do not count as runnable images.
+
+For example, if Java 21.0.2 and Alpine 3.20.0 are latest, the candidate is only `21.0.2-alpine3.20.0`.
+An Alpine-only change still creates a release for each eligible Java major; a Java-only change also creates a release.
+There is no intermediate-patch backfill or patch cross-product.
+Already-pinned incomplete releases are retried even after newer upstream versions appear; that is repair of existing release intent, not historical backfill.
+
+HTTP failures, invalid metadata and pagination errors abort discovery rather than masquerading as an empty catalog.
+There is no automatic HTTP retry policy; rerun after resolving transient errors or rate limits.
+Legacy floating tags cannot identify an exact Alpine baseline, while numerically newer published Java/Alpine versions guard against downgrade under stale metadata.
+
+== Durable release intent
+
+One annotated Git tag, `java/JAVA-alpineALPINE`, carries a schema-versioned JSON manifest.
+Its fields pin the source commit, destination repository/image tag, full Java version, exact Alpine version/index digest, and both official Zulu archive URLs and SHA-256 checksums.
+The tag points to the manifest's source commit, and the release command checks that the checkout matches it.
+New tags require clean HEAD; existing tags are never force-pushed or moved.
+An input respin with unchanged public version numbers gets a deterministic `-r<12-hex-fingerprint>` suffix rather than replacing the original managed tag.
+Completed unmanaged exact-version indexes are left alone because their original pins cannot safely be recovered.
+
+Git tags are the durable queue of release intent and Docker Hub is the publication record.
+A tag existing does not mean that its images were successfully published.
+A managed release is complete only when its multi-platform image and both architecture aliases are present.
+No CI cache is authoritative; cache eviction does not lose work.
+
+== Native build and multiarch publication
+
+++++
+<div class="diagram"><div class="mermaid">
+flowchart TD
+  Tag[Validate annotated tag and source merged into main] --> AMD[Native AMD64 runner]
+  Tag --> ARM[Native ARM64 runner]
+  AMD --> AExisting{Matching image already published?}
+  ARM --> BExisting{Matching image already published?}
+  AExisting -->|Yes| AReuse[Pull and verify pinned input labels]
+  BExisting -->|Yes| BReuse[Pull and verify pinned input labels]
+  AExisting -->|No| ABuild[Build checksum-verified JRE on pinned Alpine]
+  BExisting -->|No| BBuild[Build checksum-verified JRE on pinned Alpine]
+  AReuse --> ATest[Smoke test native AMD64 image]
+  ABuild --> ATest
+  BReuse --> BTest[Smoke test native ARM64 image]
+  BBuild --> BTest
+  ATest --> APush[Push exact tested AMD64 image and record digest]
+  BTest --> BPush[Push exact tested ARM64 image and record digest]
+  APush --> Merge[Merge both immutable digests after both jobs succeed]
+  BPush --> Merge
+  Merge --> Verify[Verify Linux AMD64 and ARM64 index]
+</div></div>
+++++
+
+The shared Dockerfile requires explicit `ALPINE_IMAGE`, `DISTRIBUTION_URL` and `DISTRIBUTION_SHA256` arguments; there are no floating build defaults.
+It verifies the archive before extraction and copies only the runtime from the download stage.
+Smoke tests check the default command, Java version, Azul vendor, native architecture, Alpine release and absence of `javac` before the exact tested image is pushed.
+
+[cols="1,2",options="header"]
+|===
+|Artifact |Example tag
+|AMD64 image |`ossyupiik/java:21.0.2-alpine3.20.0-amd64`
+|ARM64 image |`ossyupiik/java:21.0.2-alpine3.20.0-arm64`
+|Multi-platform index |`ossyupiik/java:21.0.2-alpine3.20.0`
+|===
+
+The merge consumes immutable digests, not moving architecture tag lookups, and refuses to overwrite a complete index containing different image digests.
+No floating Java-major or Alpine-major aliases are updated.
+Pin the published multi-platform digest in production.
+
+== Recovery
+
+* Rerun failed jobs, or dispatch `Java update` on `main` with dry-run disabled to reconcile pending releases.
+* A published architecture is reused only after pinned labels and smoke tests match; it is not blindly rebuilt and overwritten.
+* A missing architecture alias can be recovered from a matching image in the existing multi-platform index.
+* If an incomplete index lacks an architecture, build that missing architecture and complete the merge without replacing the existing matching one.
+* Authentication/registry errors fail closed; only an explicit missing manifest is treated as absent.
+* Input-label conflicts or different existing digests require operator investigation, not deleting/moving release tags.
+* If a tag push fails after local tag creation, retain that tag and rerun; apply can retry its push without rewriting it.
+* Respect `remaining` when a batch is full; rerun to drain the queue.
+
+The update job serializes planning/apply and the reusable workflow serializes each release tag, with two releases allowed in parallel.
+Pending retries are queued before new releases; ten persistently failing pinned releases can fill the default workflow batch and delay all newer work.
+Monitor repeated failures and `remaining`, and resolve broken pinned builds or unavailable inputs rather than assuming another scheduled run will drain the queue.
+The workflow batch limit is currently fixed by the CLI default of ten; changing only a local CLI limit does not enlarge the workflow publication batch.
+Repository rules and registry access should prevent unrelated writers from racing the publisher; these checks are not a distributed registry transaction.
+The initial Alpine digest and JRE archives are pinned, but runtime `apk` dependencies resolve from Alpine repositories on first build rather than a package snapshot.
+This is not a claim of bit-for-bit reproducible package resolution.

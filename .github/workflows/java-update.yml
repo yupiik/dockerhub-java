@@ -1,0 +1,118 @@
+name: Java update
+
+on:
+  schedule:
+    - cron: '23 5 * * 3'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Discover updates without creating or pushing tags
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - '_internal/**'
+      - 'java/**'
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: zulu
+          java-version: '21'
+      - run: mvn -B -f _internal/pom.xml -Pminisite verify
+      - name: Verify repeatable shaded packaging and merged Fusion metadata
+        run: mvn -B -f _internal/pom.xml -Ppackaging-tests test
+      - name: Verify publication failure boundaries offline
+        run: java _internal/src/test/workflows/JavaReleaseWorkflowTest.java
+
+  update:
+    if: >-
+      github.repository == 'yupiik/dockerhub-java' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: java-update-apply
+      cancel-in-progress: false
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      dry-run: ${{ steps.plan.outputs.dry-run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Require the triggering main revision
+        run: |
+          set -euo pipefail
+          git checkout --detach "$GITHUB_SHA"
+          git merge-base --is-ancestor HEAD origin/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: zulu
+          java-version: '21'
+      - name: Configure tag author
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Package standalone Fusion CLI
+        run: mvn -B -f _internal/pom.xml package
+      - name: Discover updates and apply annotated tags when requested
+        id: plan
+        env:
+          DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry-run && 'true' || 'false') }}
+        run: |
+          set -euo pipefail
+          java -jar _internal/target/java-updater.jar update \
+            --update-dry-run "$DRY_RUN" \
+            --update-output _internal/target/plan.json \
+            --update-revision "$GITHUB_SHA"
+          jq -e '
+            (.matrix.include | type == "array") and
+            all(.matrix.include[]; (.tag | type == "string") and
+              (.tag | test("^java/[A-Za-z0-9][A-Za-z0-9._-]*$"))) and
+            (.releases | type == "array") and
+            (.remaining | type == "number" and . >= 0 and floor == .)
+          ' _internal/target/plan.json
+          printf 'matrix=%s\n' "$(jq -c '.matrix' _internal/target/plan.json)" >> "$GITHUB_OUTPUT"
+          printf 'count=%s\ndry-run=%s\n' \
+            "$(jq '.matrix.include | length' _internal/target/plan.json)" "$DRY_RUN" >> "$GITHUB_OUTPUT"
+          printf 'Remaining updates: %s\n' "$(jq '.remaining' _internal/target/plan.json)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: java-update-plan
+          path: _internal/target/plan.json
+          if-no-files-found: error
+
+  release:
+    needs: update
+    if: needs.update.outputs.dry-run == 'false' && needs.update.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.update.outputs.matrix) }}
+    uses: ./.github/workflows/java-release.yml
+    with:
+      tag: ${{ matrix.tag }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
